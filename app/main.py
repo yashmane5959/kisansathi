@@ -1,6 +1,8 @@
 """FastAPI Web and API server for KisanSathi."""
 
 import asyncio
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
 from fastapi import FastAPI, File, Form, Query, UploadFile
@@ -13,15 +15,49 @@ from app.agent import advise, diagnose_crop_disease
 from app.alerts import detect_risks
 from app.config import settings
 
+logger = logging.getLogger("kisansathi")
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = BASE_DIR / "web"
 STATIC_DIR = WEB_DIR / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifespan: launch Telegram bot on startup and stop on shutdown."""
+    bot_app = None
+    token = settings.telegram_bot_token.strip()
+    if token:
+        try:
+            from bot.telegram_bot import start_bot
+            logger.info("Starting Telegram Bot polling in the background...")
+            bot_app = await start_bot(token)
+            logger.info("Telegram Bot started successfully in background.")
+        except Exception as e:
+            logger.error("Telegram Bot failed to start: %s. Continuing with web app.", e)
+            bot_app = None
+    else:
+        logger.info("TELEGRAM_BOT_TOKEN not configured. Running web service without Telegram bot.")
+
+    yield
+
+    # Shutdown: Cleanly stop Telegram bot
+    if bot_app:
+        try:
+            from bot.telegram_bot import stop_bot
+            logger.info("Stopping Telegram Bot...")
+            await stop_bot(bot_app)
+            logger.info("Telegram Bot stopped cleanly.")
+        except Exception as e:
+            logger.error("Error shutting down Telegram bot: %s", e)
+
+
 app = FastAPI(
     title="KisanSathi API",
     description="Multilingual AI Agricultural Advisor for Indian Farmers",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Enable CORS for frontend and external clients

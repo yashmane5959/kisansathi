@@ -130,6 +130,7 @@ To deploy KisanSathi as a Web Service on [Render](https://render.com):
    ```bash
    uvicorn app.main:app --host 0.0.0.0 --port $PORT
    ```
+   *(Note: The FastAPI lifespan event automatically starts the Telegram bot background polling task in the same process when `TELEGRAM_BOT_TOKEN` is configured, running both the web app and Telegram bot on Render's free tier with zero extra cost).*
 5. **Environment Variables:**
    Add `GEMINI_API_KEY`, `DATA_GOV_API_KEY`, `GEMINI_MODEL`, `ALERT_LANGUAGE`, and optionally `TELEGRAM_BOT_TOKEN` in Render's **Environment** tab.
 

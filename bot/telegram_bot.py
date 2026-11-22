@@ -164,16 +164,8 @@ async def check_alerts_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.error("Failed to deliver alert to %s: %s", chat_id, e)
 
 
-def main() -> None:
-    """Start the Telegram bot."""
-    token = settings.telegram_bot_token.strip()
-    if not token:
-        logger.error(
-            "TELEGRAM_BOT_TOKEN is not set in your .env file. "
-            "Please add TELEGRAM_BOT_TOKEN to enable the Telegram bot."
-        )
-        sys.exit(1)
-
+def create_telegram_app(token: str):
+    """Build and configure the Telegram Application instance."""
     app = ApplicationBuilder().token(token).build()
 
     # Handlers
@@ -188,7 +180,47 @@ def main() -> None:
         app.job_queue.run_repeating(check_alerts_job, interval=6 * 3600, first=60)
         logger.info("Job queue initialized for 6-hourly proactive alerts.")
 
-    logger.info("KisanSathi Telegram Bot is starting polling...")
+    return app
+
+
+async def start_bot(token: str):
+    """Start the Telegram bot asynchronously in background within the existing event loop."""
+    app = create_telegram_app(token)
+    logger.info("Initializing Telegram Bot for background polling...")
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(drop_pending_updates=True)
+    logger.info("Telegram Bot is running in background polling mode.")
+    return app
+
+
+async def stop_bot(app) -> None:
+    """Cleanly shut down the background Telegram bot."""
+    if app:
+        try:
+            logger.info("Stopping Telegram Bot updater...")
+            if app.updater and app.updater.running:
+                await app.updater.stop()
+            logger.info("Stopping Telegram Application...")
+            await app.stop()
+            await app.shutdown()
+            logger.info("Telegram Bot stopped cleanly.")
+        except Exception as e:
+            logger.error("Error shutting down Telegram bot: %s", e)
+
+
+def main() -> None:
+    """Start the Telegram bot in standalone mode."""
+    token = settings.telegram_bot_token.strip()
+    if not token:
+        logger.error(
+            "TELEGRAM_BOT_TOKEN is not set in your .env file. "
+            "Please add TELEGRAM_BOT_TOKEN to enable the Telegram bot."
+        )
+        sys.exit(1)
+
+    app = create_telegram_app(token)
+    logger.info("KisanSathi Telegram Bot is starting polling in standalone mode...")
     app.run_polling()
 
 
