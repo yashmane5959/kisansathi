@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>KisanSathi - AI Agricultural Advisor</title>
+  <meta name="theme-color" content="#2e7d32">
+  <style>
+    :root {
+      --bg-color: #f4fbf4;
+      --card-bg: #ffffff;
+      --text-color: #1c281e;
+      --text-muted: #526354;
+      --primary: #2e7d32;
+      --primary-hover: #1b5e20;
+      --primary-light: #e8f5e9;
+      --accent: #f57f17;
+      --danger: #d32f2f;
+      --border-color: #c8e6c9;
+      --shadow: 0 4px 16px rgba(46, 125, 50, 0.1);
+      --font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-color: #121c13;
+        --card-bg: #1c2a1e;
+        --text-color: #e8f5e9;
+        --text-muted: #a5d6a7;
+        --primary: #4caf50;
+        --primary-hover: #66bb6a;
+        --primary-light: #243826;
+        --accent: #ffb74d;
+        --danger: #ef5350;
+        --border-color: #2e4a32;
+        --shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      font-family: var(--font-family);
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      line-height: 1.5;
+      padding: 16px;
+      display: flex;
+      justify-content: center;
+      min-height: 100vh;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 680px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Header */
+    header {
+      background: var(--card-bg);
+      padding: 20px;
+      border-radius: 16px;
+      border: 1px solid var(--border-color);
+      box-shadow: var(--shadow);
+      text-align: center;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .brand-icon {
+      font-size: 2rem;
+    }
+
+    h1 {
+      font-size: 1.8rem;
+      font-weight: 800;
+      color: var(--primary);
+      letter-spacing: -0.5px;
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    /* Card */
+    .card {
+      background: var(--card-bg);
+      padding: 20px;
+      border-radius: 16px;
+      border: 1px solid var(--border-color);
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .section-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Form Inputs */
+    label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+      display: block;
+    }
+
+    select, input, textarea {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1.5px solid var(--border-color);
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      font-family: inherit;
+      font-size: 1rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    select:focus, input:focus, textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.2);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 90px;
+    }
+
+    .row {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+    }
+
+    .flex-1 {
+      flex: 1;
+    }
+
+    /* Buttons */
+    .btn {
+      padding: 12px 18px;
+      border-radius: 10px;
+      border: none;
+      font-family: inherit;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background-color 0.2s, transform 0.1s, opacity 0.2s;
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .btn-primary {
+      background-color: var(--primary);
+      color: #ffffff;
+    }
+
+    .btn-primary:hover {
+      background-color: var(--primary-hover);
+    }
+
+    .btn-secondary {
+      background-color: var(--primary-light);
+      color: var(--primary);
+      border: 1px solid var(--border-color);
+    }
+
+    .btn-accent {
+      background-color: var(--accent);
+      color: #ffffff;
+    }
+
+    .btn-danger {
+      background-color: var(--danger);
+      color: #ffffff;
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .button-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .button-group .btn {
+      flex: 1;
+      min-width: 130px;
+    }
+
+    /* Status and Alert Box */
+    .status-box {
+      display: none;
+      padding: 12px 16px;
+      border-radius: 10px;
+      background: var(--primary-light);
+      color: var(--primary);
+      font-weight: 500;
+      font-size: 0.95rem;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .status-spinner {
+      width: 18px;
+      height: 18px;
+      border: 3px solid rgba(46, 125, 50, 0.3);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .alert-banner {
+      display: none;
+      padding: 14px;
+      border-radius: 12px;
+      background: rgba(245, 127, 23, 0.15);
+      border-left: 5px solid var(--accent);
+      color: var(--text-color);
+      font-size: 0.9rem;
+    }
+
+    .alert-banner.active {
+      display: block;
+    }
+
+    /* Answer Display */
+    .answer-card {
+      display: none;
+      padding: 22px;
+      border-radius: 16px;
+      background: var(--card-bg);
+      border: 2px solid var(--primary);
+      box-shadow: var(--shadow);
+    }
+
+    .answer-card.visible {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .answer-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--primary);
+      font-size: 1.1rem;
+      font-weight: 700;
+    }
+
+    .answer-text {
+      font-size: 1.25rem;
+      font-weight: 500;
+      line-height: 1.7;
+      white-space: pre-line;
+      color: var(--text-color);
+    }
+
+    .speaking-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.85rem;
+      color: var(--primary);
+      font-weight: 600;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* Quick suggestions */
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: -6px;
+    }
+
+    .chip {
+      background: var(--primary-light);
+      color: var(--primary);
+      font-size: 0.85rem;
+      padding: 6px 12px;
+      border-radius: 20px;
+      cursor: pointer;
+      border: 1px solid var(--border-color);
+      transition: background-color 0.15s;
+    }
+
+    .chip:hover {
+      background-color: var(--border-color);
+    }
+
+    footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      padding: 12px 0 24px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header>
+      <div class="brand">
+        <span class="brand-icon">🌱</span>
+        <h1>KisanSathi</h1>
+      </div>
+      <p class="subtitle">AI Agricultural Advisor for Weather, Soil & Mandi Decisions</p>
+    </header>
+
+    <!-- Location & Language Controls -->
+    <section class="card">
+      <div class="section-title">📍 Farm Location & Language</div>
+
+      <div class="row">
+        <div class="flex-1">
+          <label for="languageSelect">Select Language / भाषा</label>
+          <select id="languageSelect">
+            <option value="auto" data-code="">Auto (Detect from question)</option>
+            <option value="Marathi" data-code="mr-IN">मराठी (Marathi)</option>
+            <option value="Hindi" data-code="hi-IN" selected>हिंदी (Hindi)</option>
+            <option value="Tamil" data-code="ta-IN">தமிழ் (Tamil)</option>
+            <option value="Telugu" data-code="te-IN">తెలుగు (Telugu)</option>
+            <option value="Kannada" data-code="kn-IN">ಕನ್ನಡ (Kannada)</option>
+            <option value="Gujarati" data-code="gu-IN">ગુજરાતી (Gujarati)</option>
+            <option value="Bengali" data-code="bn-IN">বাংলা (Bengali)</option>
+            <option value="Punjabi" data-code="pa-IN">ਪੰਜਾਬੀ (Punjabi)</option>
+            <option value="English" data-code="en-IN">English</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="flex-1">
+          <label for="districtInput">Village / District / Tehsil</label>
+          <input type="text" id="districtInput" placeholder="e.g. Nashik, Baramati, Kurnool">
+        </div>
+        <button type="button" id="gpsBtn" class="btn btn-secondary" title="Auto-detect using GPS">
+          <span>📡</span> GPS
+        </button>
+      </div>
+      <div id="gpsStatus" style="font-size: 0.85rem; color: var(--text-muted); margin-top: -8px;"></div>
+    </section>
+
+    <!-- Weather Alert Banner (dynamic) -->
+    <div id="riskAlertBanner" class="alert-banner"></div>
+
+    <!-- Query Section -->
+    <section class="card">
+      <div class="section-title">❓ Ask Your Question</div>
+
+      <textarea id="questionInput" placeholder="उदा. कांदा काढणी कधी करावी? / Should I harvest my onions this week? / ਕੀ ਮੈਨੂੰ ਕਣਕ ਵੇਚਣੀ ਚਾਹੀਦੀ ਹੈ?"></textarea>
+
+      <!-- Quick prompts -->
+      <div class="chips">
+        <span class="chip" onclick="setQuery('Should I harvest my onions this week?')">🧅 Onion Harvest</span>
+        <span class="chip" onclick="setQuery('Is the price of onion rising or falling this week?')">📈 Onion Price Trend</span>
+        <span class="chip" onclick="setQuery('What is the best sowing and harvest window for wheat in Maharashtra?')">📅 Wheat Calendar</span>
+        <span class="chip" onclick="setQuery('Should I sell tomato now or wait based on mandi prices?')">🍅 Sell or Wait</span>
+        <span class="chip" onclick="setQuery('Can I spray pesticide tomorrow or will it rain?')">🌧️ Spraying Advice</span>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="button-group">
+        <button type="button" id="askBtn" class="btn btn-primary">
+          <span>💬</span> Ask KisanSathi
+        </button>
+        <button type="button" id="speakBtn" class="btn btn-accent">
+          <span>🎤</span> Speak Question
+        </button>
+        <button type="button" id="photoBtn" class="btn btn-secondary" title="Scan crop leaf or pest for instant diagnosis">
+          <span>📷</span> Scan Crop Disease
+        </button>
+        <input type="file" id="photoInput" accept="image/*" capture="environment" style="display: none;">
+        <button type="button" id="stopAudioBtn" class="btn btn-danger" style="display: none;">
+          <span>⏹️</span> Stop Audio
+        </button>
+      </div>
+
+      <!-- Photo Preview (dynamic) -->
+      <div id="photoPreviewCard" style="display: none; align-items: center; gap: 12px; padding: 10px; background: var(--primary-light); border-radius: 10px;">
+        <img id="photoThumb" style="width: 55px; height: 55px; object-fit: cover; border-radius: 8px; border: 1.5px solid var(--primary);" alt="Crop sample">
+        <div style="flex: 1; font-size: 0.9rem;">
+          <span id="photoFileName" style="font-weight: 600;">Crop Photo Selected</span>
+          <div style="font-size: 0.8rem; color: var(--text-muted);">Ready for Gemini Vision Diagnosis</div>
+        </div>
+        <button type="button" id="diagnoseBtn" class="btn btn-primary" style="padding: 8px 14px; font-size: 0.85rem;">
+          🩺 Diagnose
+        </button>
+      </div>
+    </section>
+
+    <!-- Progress Status Box -->
+    <div id="statusBox" class="status-box">
+      <div class="status-spinner"></div>
+      <span id="statusMessage">Checking weather, soil and mandi prices...</span>
+    </div>
+
+    <!-- Answer Display Card -->
+    <section id="answerCard" class="answer-card">
+      <div class="answer-title">
+        <span>🌾 KisanSathi Advice</span>
+        <span id="speakingBadge" class="speaking-indicator" style="display: none;">
+          🔊 Speaking...
+        </span>
+      </div>
+      <div id="answerText" class="answer-text"></div>
+      <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px;">
+        <button type="button" id="replayAudioBtn" class="btn btn-secondary" style="font-size: 0.85rem; padding: 6px 12px;">
+          🔊 Listen Again
+        </button>
+      </div>
+    </section>
+
+    <footer>
+      KisanSathi • Climate, Resource Infrastructure & Global Supply Resilience Track<br>
+      Always confirm chemical or pesticide doses with your local agriculture office.
+    </footer>
+  </div>
+
+  <script>
+    // State
+    let currentCoords = { lat: null, lon: null };
+    let speechRecognition = null;
+    let isListening = false;
+    let currentUtterance = null;
+
+    // Elements
+    const languageSelect = document.getElementById('languageSelect');
+    const districtInput = document.getElementById('districtInput');
+    const gpsBtn = document.getElementById('gpsBtn');
+    const gpsStatus = document.getElementById('gpsStatus');
+    const questionInput = document.getElementById('questionInput');
+    const askBtn = document.getElementById('askBtn');
+    const speakBtn = document.getElementById('speakBtn');
+    const stopAudioBtn = document.getElementById('stopAudioBtn');
+    const statusBox = document.getElementById('statusBox');
+    const statusMessage = document.getElementById('statusMessage');
+    const answerCard = document.getElementById('answerCard');
+    const answerText = document.getElementById('answerText');
+    const speakingBadge = document.getElementById('speakingBadge');
+    const replayAudioBtn = document.getElementById('replayAudioBtn');
+    const riskAlertBanner = document.getElementById('riskAlertBanner');
+
+    function setQuery(text) {
+      questionInput.value = text;
+      questionInput.focus();
+    }
+
+    // Geolocation detection
+    gpsBtn.addEventListener('click', () => {
+      if (!navigator.geolocation) {
+        gpsStatus.textContent = "Geolocation is not supported by your browser.";
+        return;
+      }
+      gpsStatus.textContent = "Locating your farm...";
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          currentCoords.lat = pos.coords.latitude;
+          currentCoords.lon = pos.coords.longitude;
+          gpsStatus.textContent = `📍 GPS Active: ${currentCoords.lat.toFixed(4)}, ${currentCoords.lon.toFixed(4)}`;
+          checkRisks(currentCoords.lat, currentCoords.lon);
+        },
+        (err) => {
+          gpsStatus.textContent = "Could not fetch GPS. Please enter district manually.";
+        },
+        { timeout: 10000, enableHighAccuracy: true }
+      );
+    });
+
+    // Check proactive alerts
+    async function checkRisks(lat, lon) {
+      try {
+        const res = await fetch(`/api/alerts?lat=${lat}&lon=${lon}`);
+        const data = await res.json();
+        if (data.risks && data.risks.length > 0) {
+          riskAlertBanner.innerHTML = `<strong>⚠️ Farm Weather Alerts:</strong><br>` + data.risks.join('<br>');
+          riskAlertBanner.classList.add('active');
+        } else {
+          riskAlertBanner.classList.remove('active');
+        }
+      } catch (e) {
+        console.warn("Could not check alerts:", e);
+      }
+    }
+
+    // Speech Recognition setup (Web Speech API)
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      speechRecognition = new SpeechRecognition();
+      speechRecognition.continuous = false;
+      speechRecognition.interimResults = false;
+
+      speechRecognition.onstart = () => {
+        isListening = true;
+        speakBtn.textContent = '🎙️ Listening...';
+        speakBtn.classList.replace('btn-accent', 'btn-danger');
+      };
+
+      speechRecognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        questionInput.value = transcript;
+        submitQuery();
+      };
+
+      speechRecognition.onerror = (event) => {
+        console.error("Speech error", event.error);
+        stopListening();
+        showStatus("Could not recognize voice. Please type your query.", false);
+      };
+
+      speechRecognition.onend = () => {
+        stopListening();
+      };
+    }
+
+    function stopListening() {
+      isListening = false;
+      speakBtn.innerHTML = '<span>🎤</span> Speak Question';
+      speakBtn.classList.replace('btn-danger', 'btn-accent');
+    }
+
+    speakBtn.addEventListener('click', () => {
+      if (!SpeechRecognition) {
+        alert("Voice recognition is not supported in this browser. Please use Google Chrome or type your question.");
+        return;
+      }
+      if (isListening) {
+        speechRecognition.stop();
+        stopListening();
+        return;
+      }
+
+      // Stop speech synthesis if playing
+      stopSpeech();
+
+      // Configure language code
+      const selectedOption = languageSelect.options[languageSelect.selectedIndex];
+      const langCode = selectedOption.getAttribute('data-code') || 'hi-IN';
+      speechRecognition.lang = langCode;
+
+      try {
+        speechRecognition.start();
+      } catch (err) {
+        console.error("Could not start speech recognition:", err);
+      }
+    });
+
+    // Query submission
+    askBtn.addEventListener('click', () => {
+      submitQuery();
+    });
+
+    async function submitQuery() {
+      const text = questionInput.value.trim();
+      const district = districtInput.value.trim();
+      const language = languageSelect.value;
+
+      if (!text) {
+        alert("Please enter or speak a question for KisanSathi.");
+        questionInput.focus();
+        return;
+      }
+
+      stopSpeech();
+      showStatus("Checking weather, soil and mandi prices...", true);
+      askBtn.disabled = true;
+
+      try {
+        const payload = {
+          text: text,
+          district: district || null,
+          lat: currentCoords.lat,
+          lon: currentCoords.lon,
+          language: language,
+        };
+
+        const res = await fetch("/api/advise", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          throw new Error(`Server returned HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        const answer = data.answer || "No response received.";
+
+        displayAnswer(answer);
+        speakAnswer(answer);
+      } catch (err) {
+        displayAnswer(`Error: Unable to connect to KisanSathi. ${err.message}`);
+      } finally {
+        showStatus("", false);
+        askBtn.disabled = false;
+      }
+    }
+
+    function showStatus(msg, visible) {
+      if (visible) {
+        statusMessage.textContent = msg;
+        statusBox.style.display = 'flex';
+      } else {
+        statusBox.style.display = 'none';
+      }
+    }
+
+    function displayAnswer(ans) {
+      answerText.textContent = ans;
+      answerCard.classList.add('visible');
+      answerCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // Text to Speech
+    function speakAnswer(text) {
+      if (!('speechSynthesis' in window)) return;
+
+      stopSpeech();
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      const selectedOption = languageSelect.options[languageSelect.selectedIndex];
+      const langCode = selectedOption.getAttribute('data-code') || 'hi-IN';
+      utterance.lang = langCode;
+      utterance.rate = 0.95; // Slightly slower for clear rural comprehension
+
+      utterance.onstart = () => {
+        speakingBadge.style.display = 'inline-flex';
+        stopAudioBtn.style.display = 'inline-flex';
+      };
+
+      utterance.onend = utterance.onerror = () => {
+        speakingBadge.style.display = 'none';
+        stopAudioBtn.style.display = 'none';
+        currentUtterance = null;
+      };
+
+      currentUtterance = utterance;
+      window.speechSynthesis.speak(utterance);
+    }
+
+    function stopSpeech() {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      speakingBadge.style.display = 'none';
+      stopAudioBtn.style.display = 'none';
+      currentUtterance = null;
+    }
+
+    stopAudioBtn.addEventListener('click', stopSpeech);
+    replayAudioBtn.addEventListener('click', () => {
+      const text = answerText.textContent;
+      if (text) {
+        speakAnswer(text);
+      }
+    });
+
+    // Crop Photo Diagnosis (Gemini Multimodal Vision)
+    const photoBtn = document.getElementById('photoBtn');
+    const photoInput = document.getElementById('photoInput');
+    const photoPreviewCard = document.getElementById('photoPreviewCard');
+    const photoThumb = document.getElementById('photoThumb');
+    const photoFileName = document.getElementById('photoFileName');
+    const diagnoseBtn = document.getElementById('diagnoseBtn');
+    let selectedPhotoFile = null;
+
+    if (photoBtn && photoInput) {
+      photoBtn.addEventListener('click', () => {
+        photoInput.click();
+      });
+
+      photoInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        selectedPhotoFile = file;
+        photoFileName.textContent = file.name;
+        photoThumb.src = URL.createObjectURL(file);
+        photoPreviewCard.style.display = 'flex';
+        photoPreviewCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+
+      diagnoseBtn.addEventListener('click', async () => {
+        if (!selectedPhotoFile) return;
+        stopSpeech();
+        showStatus("Analyzing crop photo for pests and diseases with Gemini Vision...", true);
+        diagnoseBtn.disabled = true;
+
+        try {
+          const formData = new FormData();
+          formData.append('image', selectedPhotoFile);
+          formData.append('notes', questionInput.value.trim() || 'Please diagnose this crop and recommend safe treatment.');
+          formData.append('language', languageSelect.value);
+
+          const res = await fetch('/api/diagnose-crop', {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          displayAnswer(data.answer);
+          speakAnswer(data.answer);
+        } catch (err) {
+          displayAnswer("Could not diagnose crop photo: " + err.message);
+        } finally {
+          showStatus("", false);
+          diagnoseBtn.disabled = false;
+        }
+      });
+    }
+
+    // Auto-detect district change to refresh alerts if district geocoded
+    districtInput.addEventListener('change', async () => {
+      const name = districtInput.value.trim();
+      if (name && (!currentCoords.lat || !currentCoords.lon)) {
+        // Will be geocoded by Gemini during question
+      }
+    });
+  </script>
+</body>
+</html>
