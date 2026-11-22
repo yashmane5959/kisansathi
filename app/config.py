@@ -25,6 +25,7 @@ class Settings(BaseModel):
     data_gov_api_key: str = Field(default_factory=lambda: os.getenv("DATA_GOV_API_KEY", ""))
     telegram_bot_token: str = Field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", ""))
     alert_language: str = Field(default_factory=lambda: os.getenv("ALERT_LANGUAGE", "Hindi"))
+    port: int = Field(default_factory=lambda: int(os.getenv("PORT", "8000")))
 
     def reload(self):
         """Reload configuration from environment variables."""
@@ -37,6 +38,7 @@ class Settings(BaseModel):
         self.data_gov_api_key = os.getenv("DATA_GOV_API_KEY", "")
         self.telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
         self.alert_language = os.getenv("ALERT_LANGUAGE", "Hindi")
+        self.port = int(os.getenv("PORT", "8000"))
 
 
 settings = Settings()

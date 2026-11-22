@@ -1,40 +1,27 @@
 """FastAPI Web and API server for KisanSathi."""
 
 import asyncio
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
 from fastapi import FastAPI, File, Form, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.agent import advise, diagnose_crop_disease
 from app.alerts import detect_risks
 from app.config import settings
-from app.db import Base, engine, init_db
-from app.routes_farm import router as farm_router
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = BASE_DIR / "web"
 STATIC_DIR = WEB_DIR / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup: ensure tables exist
-    init_db()
-    yield
-    # Shutdown logic if any
-
-
 app = FastAPI(
     title="KisanSathi API",
-    description="Multilingual AI Agricultural Advisor & Farm Management Platform",
-    version="2.0.0",
-    lifespan=lifespan,
+    description="Multilingual AI Agricultural Advisor for Indian Farmers",
+    version="1.0.0",
 )
 
 # Enable CORS for frontend and external clients
@@ -48,9 +35,6 @@ app.add_middleware(
 
 # Mount static files
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-# Mount farm routes
-app.include_router(farm_router, prefix="/api")
 
 
 class AdviseRequest(BaseModel):
@@ -70,42 +54,12 @@ class AlertResponse(BaseModel):
 
 
 @app.get("/")
-def serve_root():
-    """Forward root to login page."""
-    login_path = WEB_DIR / "login.html"
-    if login_path.exists():
-        return FileResponse(str(login_path))
+def serve_index():
+    """Serve the single-page web UI."""
     index_path = WEB_DIR / "index.html"
-    if index_path.exists():
-        return FileResponse(str(index_path))
-    return {"message": "KisanSathi is running."}
-
-
-@app.get("/login")
-def serve_login():
-    """Serve login and registration page."""
-    login_path = WEB_DIR / "login.html"
-    if login_path.exists():
-        return FileResponse(str(login_path))
-    return RedirectResponse(url="/")
-
-
-@app.get("/dashboard")
-def serve_dashboard():
-    """Serve the farm dashboard page."""
-    dashboard_path = WEB_DIR / "dashboard.html"
-    if dashboard_path.exists():
-        return FileResponse(str(dashboard_path))
-    return RedirectResponse(url="/")
-
-
-@app.get("/chat")
-def serve_chat():
-    """Serve the original standalone KisanSathi chat advisor."""
-    index_path = WEB_DIR / "index.html"
-    if index_path.exists():
-        return FileResponse(str(index_path))
-    return {"message": "Chat page not found."}
+    if not index_path.exists():
+        return {"message": "KisanSathi is running. web/index.html not found."}
+    return FileResponse(str(index_path))
 
 
 @app.post("/api/advise", response_model=AdviseResponse)
@@ -200,6 +154,15 @@ def health_check():
         "status": "healthy",
         "model": settings.gemini_model,
         "gemini_key_set": bool(settings.gemini_api_key),
-        "data_gov_key_set": bool(settings.data_gov_api_key),
+        "data_gov_api_key_set": bool(settings.data_gov_api_key),
         "telegram_bot_configured": bool(settings.telegram_bot_token),
     }
+
+
+if __name__ == "__main__":
+    import os
+    import uvicorn
+
+    # Render and cloud environments provide PORT dynamically
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=False)

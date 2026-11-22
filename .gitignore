@@ -1,26 +1,45 @@
-# Virtual environment
-venv/
-.venv/
-env/
-
-# Environment secrets
+# Environment files & secrets
 .env
+.env.*
+!.env.example
 
-# Python bytecode
+# Python bytecode & cache
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 
-# Testing and coverage
-.pytest_cache/
-.coverage
-htmlcov/
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
 
-# Data / DB
-*.sqlite3
+# Node.js dependencies (if applicable)
+node_modules/
+
+# Databases & local storage
 *.db
+*.sqlite3
+mandi_history.sqlite3
+kisansathi.db
+
+# Logs
+*.log
+logs/
 
 # Operating System files
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local data & tokens
+*.token
+token.json
+credentials.json
