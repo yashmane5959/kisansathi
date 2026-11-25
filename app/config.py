@@ -41,6 +41,12 @@ class Settings(BaseModel):
     telegram_bot_token: str = Field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", ""))
     alert_language: str = Field(default_factory=lambda: os.getenv("ALERT_LANGUAGE", "Hindi"))
     port: int = Field(default_factory=lambda: int(os.getenv("PORT", "8000")))
+    database_url: str = Field(default_factory=lambda: os.getenv("DATABASE_URL", "sqlite:///./kisansathi.db"))
+    app_timezone: str = Field(default_factory=lambda: os.getenv("APP_TIMEZONE", "Asia/Kolkata"))
+    morning_hour: int = Field(default_factory=lambda: int(os.getenv("MORNING_HOUR", "6")))
+    morning_minute: int = Field(default_factory=lambda: int(os.getenv("MORNING_MINUTE", "30")))
+    run_scheduler: bool = Field(default_factory=lambda: os.getenv("RUN_SCHEDULER", "false").lower() in ("true", "1", "yes"))
+    run_bot_in_app: bool = Field(default_factory=lambda: os.getenv("RUN_BOT_IN_APP", "false").lower() in ("true", "1", "yes"))
 
     def reload(self):
         """Reload configuration from environment variables."""
@@ -54,6 +60,12 @@ class Settings(BaseModel):
         self.telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
         self.alert_language = os.getenv("ALERT_LANGUAGE", "Hindi")
         self.port = int(os.getenv("PORT", "8000"))
+        self.database_url = os.getenv("DATABASE_URL", "sqlite:///./kisansathi.db")
+        self.app_timezone = os.getenv("APP_TIMEZONE", "Asia/Kolkata")
+        self.morning_hour = int(os.getenv("MORNING_HOUR", "6"))
+        self.morning_minute = int(os.getenv("MORNING_MINUTE", "30"))
+        self.run_scheduler = os.getenv("RUN_SCHEDULER", "false").lower() in ("true", "1", "yes")
+        self.run_bot_in_app = os.getenv("RUN_BOT_IN_APP", "false").lower() in ("true", "1", "yes")
 
 
 settings = Settings()

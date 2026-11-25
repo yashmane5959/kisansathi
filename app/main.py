@@ -14,6 +14,9 @@ from pydantic import BaseModel
 from app.agent import advise, diagnose_crop_disease
 from app.alerts import detect_risks
 from app.config import settings
+from app.db import Base, engine
+import app.models  # Ensure all SQLAlchemy models are registered
+from app.routes_farm import router as farm_router
 
 logger = logging.getLogger("kisansathi")
 
@@ -25,7 +28,14 @@ STATIC_DIR.mkdir(parents=True, exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage application lifespan: launch Telegram bot on startup and stop on shutdown."""
+    """Manage application lifespan: init DB tables, launch Telegram bot on startup and stop on shutdown."""
+    logger.info("Initializing database schema...")
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables initialized successfully.")
+    except Exception as e:
+        logger.error("Database initialization failed: %s", e)
+
     token = settings.telegram_bot_token.strip()
     if token:
         try:
@@ -59,6 +69,9 @@ app.add_middleware(
 
 # Mount static files
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# Mount farm routes (auth, profile, crops, today, etc.)
+app.include_router(farm_router)
 
 
 class AdviseRequest(BaseModel):

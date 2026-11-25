@@ -43,3 +43,6 @@ desktop.ini
 *.token
 token.json
 credentials.json
+
+# Scratch files
+scratch/
