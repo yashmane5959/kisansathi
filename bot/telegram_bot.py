@@ -105,6 +105,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "• /weather — 7-day farm weather forecast & risk warnings\n"
             "• /mandi [crop] — Live APMC market prices & sell vs. wait advice\n"
             "• /fertilizer [crop] — Soil-based fertilizer & nutrient guidance\n"
+            "• /link [code] — Link Telegram to your KisanSathi web dashboard\n"
             "• /subscribe — 6-hourly proactive extreme weather warnings\n"
             "• /help — Detailed instructions and command guide"
         )
@@ -135,6 +136,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "• `/weather` — Get a 7-day agricultural forecast with heatwave, rain, or frost warnings\n"
             "• `/mandi [crop]` — Check current APMC wholesale prices and receive sell or wait advice (e.g. `/mandi tomato`)\n"
             "• `/fertilizer [crop]` — Soil-specific fertilizer application stages and nutrient advice (e.g. `/fertilizer cotton`)\n"
+            "• `/link [code]` — Link this Telegram chat to your KisanSathi web profile to receive direct alerts\n"
             "• `/subscribe` — Enroll in automatic 6-hourly extreme weather alerts\n"
             "• `/help` — Show this message"
         )
@@ -142,6 +144,58 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     except Exception as e:
         logger.exception("Error in /help command: %s", e)
         await safe_reply(msg, "🌾 KisanSathi: Please ask any farming question or use /start to begin.")
+
+
+async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Link the Telegram user's chat ID to their KisanSathi web profile using a 6-digit code."""
+    msg = update.effective_message or update.message
+    if not msg:
+        return
+
+    chat_id = update.effective_chat.id if update.effective_chat else msg.chat_id
+    args = context.args or []
+    if not args:
+        await safe_reply(
+            msg,
+            "⚠️ Please provide your 6-digit linking code.\nExample: `/link 123456`",
+            parse_mode="Markdown",
+        )
+        return
+
+    code = args[0].strip()
+    try:
+        from app.db import SessionLocal
+        from app.models import User
+
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.link_code == code).first()
+            if not user:
+                await safe_reply(
+                    msg,
+                    "⚠️ Invalid or expired linking code. Please generate a fresh code in your KisanSathi web app dashboard.",
+                )
+                return
+
+            user.telegram_chat_id = str(chat_id)
+            user.link_code = None  # Clear one-time code
+            db.commit()
+            db.refresh(user)
+
+            lang = (user.language or "English").lower()
+            if lang == "marathi":
+                reply_text = f"🌾 अभिनंदन {user.name} जी! तुमचे टेलिग्राम खाते किसान साथीशी जोडले गेले आहे. आता तुम्हाला शेताचे अलर्ट आणि सकाळचा रिपोर्ट थेट येथे मिळतील."
+            elif lang == "hindi":
+                reply_text = f"🌾 बधाई हो {user.name} जी! आपका टेलीग्राम खाता किसान साथी से सफलतापूर्वक लिंक हो गया है। अब आपको अपने खेत के अलर्ट और सुबह की ब्रीफिंग सीधे यहां मिलेंगे।"
+            else:
+                reply_text = f"🌾 Congratulations {user.name}! Your Telegram account has been linked to KisanSathi. You will now receive automated weather alerts and morning farm briefings here."
+
+            await safe_reply(msg, reply_text)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.exception("Error in /link handler: %s", e)
+        await safe_reply(msg, "⚠️ Could not link your account due to a system error. Please try again.")
 
 
 async def require_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Tuple[Optional[float], Optional[float]]:
@@ -547,6 +601,7 @@ def create_telegram_app(token: str) -> Application:
     app.add_handler(CommandHandler("weather", weather_command))
     app.add_handler(CommandHandler("mandi", mandi_command))
     app.add_handler(CommandHandler("fertilizer", fertilizer_command))
+    app.add_handler(CommandHandler("link", link_command))
     app.add_handler(CommandHandler("subscribe", subscribe_command))
 
     # Location & Voice Handlers

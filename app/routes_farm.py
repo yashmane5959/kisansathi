@@ -17,6 +17,7 @@ from app.auth import (
     security,
     verify_password,
 )
+from app.climate_watch import check_user
 from app.config import settings
 from app.crop_data import SUPPORTED_CROPS, get_crop_data
 from app.db import get_db
@@ -29,6 +30,7 @@ from app.planner import (
     irrigation_decision,
     localise_roadmap,
 )
+from app.scheduler import generate_morning_briefing
 from app.tools import geocode_place, get_soil_info
 from app.weather import get_forecast
 
@@ -532,32 +534,47 @@ def record_watering_event(
     action = (req.action or "watered").strip().lower() if req else "watered"
     today = date.today()
 
+    existing_log = db.query(WateringLog).filter(
+        WateringLog.crop_id == crop.id,
+        WateringLog.date == today,
+    ).first()
+
     if action == "watered":
         crop.last_watered = today
         applied_mm = float(req.mm) if (req and req.mm is not None) else 25.0
         saved_mm = 0.0
-        log_entry = WateringLog(
-            crop_id=crop.id,
-            date=today,
-            action="watered",
-            mm_applied=applied_mm,
-            mm_saved=saved_mm,
-        )
-        db.add(log_entry)
+        if existing_log:
+            existing_log.action = "watered"
+            existing_log.mm_applied = applied_mm
+            existing_log.mm_saved = saved_mm
+        else:
+            log_entry = WateringLog(
+                crop_id=crop.id,
+                date=today,
+                action="watered",
+                mm_applied=applied_mm,
+                mm_saved=saved_mm,
+            )
+            db.add(log_entry)
         db.commit()
         db.refresh(crop)
         message = f"Recorded watering of {applied_mm} mm for crop {crop.crop}."
     else:  # skipped
         applied_mm = 0.0
         saved_mm = float(req.mm) if (req and req.mm is not None) else 25.0
-        log_entry = WateringLog(
-            crop_id=crop.id,
-            date=today,
-            action="skipped",
-            mm_applied=applied_mm,
-            mm_saved=saved_mm,
-        )
-        db.add(log_entry)
+        if existing_log:
+            existing_log.action = "skipped"
+            existing_log.mm_applied = applied_mm
+            existing_log.mm_saved = saved_mm
+        else:
+            log_entry = WateringLog(
+                crop_id=crop.id,
+                date=today,
+                action="skipped",
+                mm_applied=applied_mm,
+                mm_saved=saved_mm,
+            )
+            db.add(log_entry)
         db.commit()
         message = f"Recorded skipped watering of {saved_mm} mm for crop {crop.crop}."
 
@@ -673,4 +690,88 @@ def get_today_dashboard(
             "mm": round(total_mm_saved, 1),
         },
         "unread_notifications_count": unread_count,
+    }
+
+
+# ===================== Notification Endpoints =====================
+
+def serialize_notification(n: Notification) -> Dict[str, Any]:
+    """Helper to convert a Notification model instance into a JSON-friendly dict."""
+    return {
+        "id": n.id,
+        "user_id": n.user_id,
+        "kind": n.kind,
+        "severity": n.severity,
+        "title": n.title,
+        "body": n.body,
+        "dedupe_key": n.dedupe_key,
+        "read": n.read,
+        "created_at": n.created_at.isoformat() if n.created_at else None,
+    }
+
+
+@router.get("/notifications")
+def list_notifications(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retrieve the latest 50 notifications for the current farmer."""
+    notes = (
+        db.query(Notification)
+        .filter(Notification.user_id == current_user.id)
+        .order_by(Notification.id.desc())
+        .limit(50)
+        .all()
+    )
+    return [serialize_notification(n) for n in notes]
+
+
+@router.post("/notifications/read-all")
+def mark_all_notifications_read(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Mark all notifications as read for the current farmer."""
+    updated = (
+        db.query(Notification)
+        .filter(Notification.user_id == current_user.id, Notification.read == False)
+        .update({Notification.read: True}, synchronize_session=False)
+    )
+    db.commit()
+    return {"status": "success", "marked_read": updated}
+
+
+# ===================== Demo Simulation Endpoints =====================
+
+@router.post("/demo/simulate")
+def simulate_scenario(
+    scenario: str = Query(..., pattern="^(heatwave|heavyrain|frost|clear)$"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set demo weather scenario, trigger climate watch immediately, and return created alerts."""
+    current_user.demo_scenario = scenario
+    db.commit()
+    db.refresh(current_user)
+
+    created = check_user(current_user, db)
+    return {
+        "status": "success",
+        "scenario": scenario,
+        "created_count": len(created),
+        "notifications": [serialize_notification(n) for n in created],
+    }
+
+
+@router.post("/demo/briefing")
+def trigger_demo_briefing(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Generate and deliver today's farm briefing immediately for demo and testing."""
+    briefing_text = generate_morning_briefing(current_user, db)
+    return {
+        "status": "success",
+        "language": current_user.language or "English",
+        "briefing": briefing_text,
     }

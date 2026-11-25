@@ -36,19 +36,34 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("Database initialization failed: %s", e)
 
+    # Start scheduler if RUN_SCHEDULER is enabled
+    try:
+        from app.scheduler import start_scheduler, stop_scheduler
+        start_scheduler()
+    except Exception as e:
+        logger.error("Failed to start scheduler: %s", e)
+
+    # Start Telegram bot ONLY if RUN_BOT_IN_APP is explicitly enabled
     token = settings.telegram_bot_token.strip()
-    if token:
+    if settings.run_bot_in_app and token:
         try:
             from bot.telegram_bot import run_bot_in_background
-            logger.info("Starting Telegram Bot in background daemon thread...")
+            logger.info("RUN_BOT_IN_APP is true: Starting Telegram Bot in background daemon thread...")
             run_bot_in_background(token)
             logger.info("Telegram Bot thread dispatched successfully.")
         except Exception as e:
             logger.error("Telegram Bot failed to start: %s. Continuing with web app.", e)
     else:
-        logger.info("TELEGRAM_BOT_TOKEN not configured. Running web service without Telegram bot.")
+        logger.info("RUN_BOT_IN_APP is false (or token missing). In-app Telegram bot polling is disabled.")
 
     yield
+
+    # Shutdown scheduler on application exit
+    try:
+        from app.scheduler import stop_scheduler
+        stop_scheduler()
+    except Exception:
+        pass
 
 
 app = FastAPI(

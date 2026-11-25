@@ -382,16 +382,19 @@ def irrigation_decision(
             current_stage_name = stages[-1]["name"]
 
     # Soil depletion threshold
-    texture_str = (getattr(user, "soil_texture", "") or "").lower()
+    texture_str = (getattr(user, "soil_texture", "") or "").lower().strip()
     if "sand" in texture_str:
         threshold = 20.0
-        texture_label = "sandy"
+        threshold_desc = "sandy soil threshold of 20 mm"
     elif "clay" in texture_str:
         threshold = 40.0
-        texture_label = "clayey"
+        threshold_desc = "clayey soil threshold of 40 mm"
+    elif "loam" in texture_str:
+        threshold = 30.0
+        threshold_desc = "loamy soil threshold of 30 mm"
     else:
         threshold = 30.0
-        texture_label = "loamy"
+        threshold_desc = "default soil threshold of 30 mm (soil type not set)"
 
     # Default fallback weather if days is missing or empty
     if not days:
@@ -473,14 +476,14 @@ def irrigation_decision(
     if irrigation_type == "rainfed":
         if deficit >= threshold:
             reason = (
-                f"Rainfed crop: cumulative moisture deficit is {deficit:.1f} mm, exceeding the {texture_label} "
-                f"soil threshold of {threshold:.0f} mm (ET0 sum {total_et0_past:.1f} mm, past rain {rain_past_days:.1f} mm). "
+                f"Rainfed crop: cumulative moisture deficit is {deficit:.1f} mm, exceeding the {threshold_desc} "
+                f"(ET0 sum {total_et0_past:.1f} mm, past rain {rain_past_days:.1f} mm). "
                 f"Do not irrigate; apply straw mulching or interculture to conserve subsoil moisture."
             )
         else:
             reason = (
-                f"Rainfed crop: cumulative moisture deficit is {deficit:.1f} mm, safely below the {texture_label} "
-                f"threshold of {threshold:.0f} mm. Soil moisture is sufficient."
+                f"Rainfed crop: cumulative moisture deficit is {deficit:.1f} mm, safely below the {threshold_desc}. "
+                f"Soil moisture is sufficient."
             )
         return {
             "water_today": False,
@@ -506,19 +509,19 @@ def irrigation_decision(
 
     if water_today:
         reason = (
-            f"Water today: soil moisture deficit is {deficit:.1f} mm, which exceeds the {texture_label} "
-            f"soil threshold of {threshold:.0f} mm (avg ET0 {avg_et0} mm/day, Kc {kc}, past rain {rain_past_days:.1f} mm). "
+            f"Water today: soil moisture deficit is {deficit:.1f} mm, which exceeds the {threshold_desc} "
+            f"(avg ET0 {avg_et0} mm/day, Kc {kc}, past rain {rain_past_days:.1f} mm). "
             f"Apply {gross_mm:.1f} mm ({litres:,} litres on {area_acres} acres using {irrigation_type} system)."
         )
     elif rain_incoming:
         reason = (
             f"Skip irrigation: significant rain of {rain_48h:.1f} mm is forecast within 48h. "
-            f"Current deficit is {deficit:.1f} mm against {threshold:.0f} mm threshold. Next rain: {next_rain}."
+            f"Current deficit is {deficit:.1f} mm against {threshold_desc}. Next rain: {next_rain}."
         )
     else:
         reason = (
-            f"No watering needed today: current deficit is {deficit:.1f} mm, remaining below the {texture_label} "
-            f"soil threshold of {threshold:.0f} mm (Kc {kc}, avg ET0 {avg_et0} mm/day). Next expected rain: {next_rain}."
+            f"No watering needed today: current deficit is {deficit:.1f} mm, remaining below the {threshold_desc} "
+            f"(Kc {kc}, avg ET0 {avg_et0} mm/day). Next expected rain: {next_rain}."
         )
 
     return {
