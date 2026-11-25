@@ -540,11 +540,13 @@ def record_watering_event(
     ).first()
 
     DAILY_BASELINE_MM = 8.3  # Spec baseline: 25 mm every 3 days -> 8.3 mm/day
+    is_rainfed = (crop.irrigation_type or "").lower() == "rainfed"
 
     if action == "watered":
         crop.last_watered = today
         applied_mm = float(req.mm) if (req and req.mm is not None) else 25.0
-        saved_mm = max(0.0, round(DAILY_BASELINE_MM - applied_mm, 1))
+        # Rainfed crops rely solely on rainfall; they never contribute to irrigation water saved
+        saved_mm = 0.0 if is_rainfed else max(0.0, round(DAILY_BASELINE_MM - applied_mm, 1))
         if existing_log:
             existing_log.action = "watered"
             existing_log.mm_applied = applied_mm
@@ -563,7 +565,8 @@ def record_watering_event(
         message = f"Recorded watering of {applied_mm} mm for crop {crop.crop} (saved {saved_mm} mm)."
     else:  # skipped
         applied_mm = 0.0
-        saved_mm = float(req.mm) if (req and req.mm is not None) else DAILY_BASELINE_MM
+        # Rainfed crops rely solely on rainfall; they never contribute to irrigation water saved
+        saved_mm = 0.0 if is_rainfed else (float(req.mm) if (req and req.mm is not None) else DAILY_BASELINE_MM)
         if existing_log:
             existing_log.action = "skipped"
             existing_log.mm_applied = applied_mm
@@ -665,11 +668,11 @@ def get_today_dashboard(
     # 3. Overall farm risk
     overall_risk = calculate_overall_risk(crop_risks)
 
-    # 4. Total water saved calculation
+    # 4. Total water saved calculation (strictly for irrigated crops, never rainfed)
     water_logs = (
         db.query(WateringLog, Crop.area_acres)
         .join(Crop, WateringLog.crop_id == Crop.id)
-        .filter(Crop.user_id == current_user.id)
+        .filter(Crop.user_id == current_user.id, Crop.irrigation_type != "rainfed")
         .all()
     )
     total_mm_saved = sum(log.mm_saved for log, _ in water_logs)

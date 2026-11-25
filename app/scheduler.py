@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.climate_watch import check_user
 from app.config import settings
 from app.db import SessionLocal
-from app.models import Crop, User
+from app.models import Crop, User, WateringLog
 from app.notify import create_notification, localise_text
 from app.planner import calculate_risk_score, fertiliser_guidance, irrigation_decision
 from app.weather import apply_demo, get_forecast
@@ -86,6 +86,24 @@ def generate_morning_briefing(user: User, db: Session) -> str:
             lines.append(f"Watering today: Yes, apply {irr.get('litres', 0):,} litres ({irr.get('mm', 0)} mm).")
         else:
             lines.append(f"Watering today: No, soil moisture is adequate (deficit {irr.get('deficit', 0)} mm).")
+            # Automatically record skipped water when engine advises no watering needed
+            # Rainfed crops never log saved water (rely solely on rainfall)
+            is_rainfed = (active_crop.irrigation_type or "").lower() == "rainfed"
+            if not is_rainfed:
+                existing_log = db.query(WateringLog).filter(
+                    WateringLog.crop_id == active_crop.id,
+                    WateringLog.date == today,
+                ).first()
+                if not existing_log:
+                    log_entry = WateringLog(
+                        crop_id=active_crop.id,
+                        date=today,
+                        action="skipped",
+                        mm_applied=0.0,
+                        mm_saved=8.3,
+                    )
+                    db.add(log_entry)
+                    db.commit()
 
         # Line 5: One concise fertiliser tip (pick first sentence only, no mid-word truncation)
         first_fert_block = fert.split("\n")[0].replace("Stage (", "").replace("):", " -").strip()
@@ -164,9 +182,38 @@ def run_morning_briefings_job():
         for user in users:
             try:
                 # Only farmers with at least one active crop
-                has_crop = db.query(Crop).filter(Crop.user_id == user.id, Crop.status == "active").first()
-                if has_crop:
+                active_crops = db.query(Crop).filter(Crop.user_id == user.id, Crop.status == "active").all()
+                if active_crops:
                     generate_morning_briefing(user, db)
+
+                    # Also evaluate all active irrigated crops for skipped water logging (upsert rule)
+                    forecast = []
+                    if user.lat is not None and user.lon is not None:
+                        try:
+                            forecast = get_forecast(user.lat, user.lon)
+                            if user.demo_scenario:
+                                forecast = apply_demo(forecast, user.demo_scenario)
+                        except Exception:
+                            forecast = []
+
+                    today = date.today()
+                    for c in active_crops:
+                        if (c.irrigation_type or "").lower() != "rainfed":
+                            c_irr = irrigation_decision(c, user, forecast)
+                            if not c_irr.get("water_today"):
+                                ex_log = db.query(WateringLog).filter(
+                                    WateringLog.crop_id == c.id,
+                                    WateringLog.date == today,
+                                ).first()
+                                if not ex_log:
+                                    db.add(WateringLog(
+                                        crop_id=c.id,
+                                        date=today,
+                                        action="skipped",
+                                        mm_applied=0.0,
+                                        mm_saved=8.3,
+                                    ))
+                                    db.commit()
             except Exception as e:
                 logger.error("Failed morning briefing for user %s: %s", user.username, e)
     finally:
