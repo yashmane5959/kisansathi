@@ -326,3 +326,404 @@ def localise_roadmap(stages: List[Dict[str, Any]], language: str) -> List[Dict[s
         return localised_stages
 
     return stages
+
+
+# ============================================================================
+# Phase 3: Irrigation Engine, Fertiliser Guidance, and Risk Scoring
+# ============================================================================
+
+def irrigation_decision(
+    crop_row: Any,
+    user: Any,
+    days: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Calculate soil moisture deficit, threshold, and irrigation advice for today.
+
+    Formulas:
+      - Kc = current stage crop coefficient (or last stage if outside duration)
+      - Start tracking from max(last_watered or sowing_date, today - 7 days)
+      - Effective rain = 0.8 * rain_mm (if rain_mm >= 5 mm else 0)
+      - Deficit += (et0 * kc - effective_rain), clamped >= 0
+      - Threshold: sandy = 20 mm, loamy = 30 mm, clayey = 40 mm, unknown = 30 mm
+      - Water today if deficit >= threshold and no rain >= 8 mm forecast today or tomorrow
+      - Gross mm = net mm / efficiency (drip 0.9, flood 0.6)
+      - Litres = gross mm * 4047 * area_acres
+    """
+    today = date.today()
+    sowing_date = getattr(crop_row, "sowing_date", today)
+    if isinstance(sowing_date, str):
+        sowing_date = datetime.strptime(sowing_date, "%Y-%m-%d").date()
+
+    last_watered = getattr(crop_row, "last_watered", None)
+    if isinstance(last_watered, str):
+        last_watered = datetime.strptime(last_watered, "%Y-%m-%d").date()
+
+    # Determine start date for deficit accumulation
+    seven_days_ago = today - timedelta(days=7)
+    water_anchor = last_watered if last_watered else sowing_date
+    start_date = max(water_anchor, seven_days_ago)
+
+    # Determine Kc of current stage
+    crop_name = getattr(crop_row, "crop", "Onion")
+    crop_info = get_crop_data(crop_name)
+    days_since_sowing = (today - sowing_date).days
+
+    kc = 0.8
+    current_stage_name = "Growth"
+    if crop_info and crop_info.get("stages"):
+        stages = crop_info["stages"]
+        for stg in stages:
+            if stg["start_day"] <= days_since_sowing <= stg["end_day"]:
+                kc = stg["kc"]
+                current_stage_name = stg["name"]
+                break
+        else:
+            kc = stages[-1]["kc"]
+            current_stage_name = stages[-1]["name"]
+
+    # Soil depletion threshold
+    texture_str = (getattr(user, "soil_texture", "") or "").lower()
+    if "sand" in texture_str:
+        threshold = 20.0
+        texture_label = "sandy"
+    elif "clay" in texture_str:
+        threshold = 40.0
+        texture_label = "clayey"
+    else:
+        threshold = 30.0
+        texture_label = "loamy"
+
+    # Default fallback weather if days is missing or empty
+    if not days:
+        days = []
+        for offset in range(-7, 8):
+            d = today + timedelta(days=offset)
+            days.append({
+                "date": d.isoformat(),
+                "tmax": 32.0,
+                "tmin": 20.0,
+                "rain_mm": 0.0,
+                "rain_prob": 10,
+                "et0": 4.5,
+                "is_past": d < today,
+            })
+
+    # Accumulate daily soil moisture deficit from start_date through today
+    deficit = 0.0
+    total_et0_past = 0.0
+    rain_past_days = 0.0
+    tracked_days_count = 0
+
+    for d in days:
+        d_str = d.get("date")
+        if not d_str:
+            continue
+        try:
+            d_date = datetime.strptime(d_str, "%Y-%m-%d").date()
+        except Exception:
+            continue
+
+        if start_date <= d_date <= today:
+            tracked_days_count += 1
+            et0 = float(d.get("et0", 4.5))
+            total_et0_past += et0
+            rain = float(d.get("rain_mm", 0.0))
+            rain_past_days += rain
+            eff_rain = 0.8 * rain if rain >= 5.0 else 0.0
+            daily_loss = (et0 * kc) - eff_rain
+            deficit += daily_loss
+            if deficit < 0.0:
+                deficit = 0.0
+
+    deficit = round(deficit, 1)
+
+    # Inspect upcoming forecast: rain today or tomorrow
+    tomorrow = today + timedelta(days=1)
+    rain_today = 0.0
+    rain_tomorrow = 0.0
+    next_rain = "No significant rain forecast in next 7 days"
+    found_next_rain = False
+
+    for d in days:
+        d_str = d.get("date")
+        if not d_str:
+            continue
+        try:
+            d_date = datetime.strptime(d_str, "%Y-%m-%d").date()
+        except Exception:
+            continue
+
+        rain_val = float(d.get("rain_mm", 0.0))
+        if d_date == today:
+            rain_today = rain_val
+        elif d_date == tomorrow:
+            rain_tomorrow = rain_val
+
+        if d_date >= today and rain_val >= 5.0 and not found_next_rain:
+            next_rain = f"{d_str} ({rain_val} mm, {d.get('rain_prob', 0)}% prob)"
+            found_next_rain = True
+
+    rain_48h = max(rain_today, rain_tomorrow)
+    rain_incoming = rain_48h >= 8.0
+
+    irrigation_type = getattr(crop_row, "irrigation_type", "drip").lower()
+    area_acres = float(getattr(crop_row, "area_acres", 1.0) or 1.0)
+
+    # 1. Rainfed crop: Never recommend irrigation
+    if irrigation_type == "rainfed":
+        if deficit >= threshold:
+            reason = (
+                f"Rainfed crop: cumulative moisture deficit is {deficit:.1f} mm, exceeding the {texture_label} "
+                f"soil threshold of {threshold:.0f} mm (ET0 sum {total_et0_past:.1f} mm, past rain {rain_past_days:.1f} mm). "
+                f"Do not irrigate; apply straw mulching or interculture to conserve subsoil moisture."
+            )
+        else:
+            reason = (
+                f"Rainfed crop: cumulative moisture deficit is {deficit:.1f} mm, safely below the {texture_label} "
+                f"threshold of {threshold:.0f} mm. Soil moisture is sufficient."
+            )
+        return {
+            "water_today": False,
+            "mm": 0.0,
+            "net_mm": 0.0,
+            "litres": 0,
+            "reason": reason,
+            "next_rain": next_rain,
+            "deficit": deficit,
+            "threshold": threshold,
+            "kc": kc,
+            "stage": current_stage_name,
+        }
+
+    # 2. Irrigated crops (drip or flood)
+    water_today = (deficit >= threshold) and not rain_incoming
+    net_mm = deficit if water_today else 0.0
+    efficiency = 0.9 if irrigation_type == "drip" else 0.6
+    gross_mm = round(net_mm / efficiency, 1) if water_today else 0.0
+    litres = int(round(gross_mm * 4047.0 * area_acres))
+
+    avg_et0 = round(total_et0_past / max(1, tracked_days_count), 1)
+
+    if water_today:
+        reason = (
+            f"Water today: soil moisture deficit is {deficit:.1f} mm, which exceeds the {texture_label} "
+            f"soil threshold of {threshold:.0f} mm (avg ET0 {avg_et0} mm/day, Kc {kc}, past rain {rain_past_days:.1f} mm). "
+            f"Apply {gross_mm:.1f} mm ({litres:,} litres on {area_acres} acres using {irrigation_type} system)."
+        )
+    elif rain_incoming:
+        reason = (
+            f"Skip irrigation: significant rain of {rain_48h:.1f} mm is forecast within 48h. "
+            f"Current deficit is {deficit:.1f} mm against {threshold:.0f} mm threshold. Next rain: {next_rain}."
+        )
+    else:
+        reason = (
+            f"No watering needed today: current deficit is {deficit:.1f} mm, remaining below the {texture_label} "
+            f"soil threshold of {threshold:.0f} mm (Kc {kc}, avg ET0 {avg_et0} mm/day). Next expected rain: {next_rain}."
+        )
+
+    return {
+        "water_today": water_today,
+        "mm": gross_mm,
+        "net_mm": net_mm,
+        "litres": litres,
+        "reason": reason,
+        "next_rain": next_rain,
+        "deficit": deficit,
+        "threshold": threshold,
+        "kc": kc,
+        "stage": current_stage_name,
+    }
+
+
+def fertiliser_guidance(crop_row: Any, user: Any) -> str:
+    """Generate agronomic fertiliser guidance based on crop growth stage and soil parameters.
+
+    Never mentions specific kg/acre doses; always ends with mandatory KVK / soil test reminder.
+    """
+    today = date.today()
+    sowing_date = getattr(crop_row, "sowing_date", today)
+    if isinstance(sowing_date, str):
+        sowing_date = datetime.strptime(sowing_date, "%Y-%m-%d").date()
+
+    days_since_sowing = (today - sowing_date).days
+    crop_name = getattr(crop_row, "crop", "Onion")
+    crop_info = get_crop_data(crop_name)
+
+    fert_note = "Maintain balanced organic and mineral nutrition suited to vegetative vigor."
+    stage_name = "Active Growth"
+    if crop_info and crop_info.get("stages"):
+        stages = crop_info["stages"]
+        for stg in stages:
+            if stg["start_day"] <= days_since_sowing <= stg["end_day"]:
+                fert_note = stg["fert_note"]
+                stage_name = stg["name"]
+                break
+        else:
+            fert_note = stages[-1]["fert_note"]
+            stage_name = stages[-1]["name"]
+
+    soil_flags: List[str] = []
+    ph = getattr(user, "soil_ph", None)
+    if ph is not None:
+        try:
+            ph_val = float(ph)
+            if ph_val < 5.5:
+                soil_flags.append(
+                    f"Soil pH is acidic ({ph_val:.1f}). Apply agricultural lime / dolomite based on soil test to improve nutrient availability."
+                )
+            elif ph_val > 8.5:
+                soil_flags.append(
+                    f"Soil pH is alkaline ({ph_val:.1f}). Incorporate gypsum, pressmud, and farmyard manure (FYM) to improve permeability and lower sodicity."
+                )
+        except Exception:
+            pass
+
+    oc = getattr(user, "soil_oc", None)
+    if oc is not None:
+        try:
+            oc_val = float(oc)
+            if oc_val < 10.0:
+                soil_flags.append(
+                    f"Soil organic carbon is low ({oc_val:.1f} g/kg). Add well-decomposed compost, cow dung manure, or green manuring to boost microbial activity."
+                )
+        except Exception:
+            pass
+
+    mandatory_reminder = (
+        "Note: Always verify fertilizer dosages with a certified soil health card or consult your local "
+        "Krishi Vigyan Kendra (KVK) / block agriculture officer before field application. Specific kg-per-acre "
+        "rates must be adjusted to your soil test results to prevent nutrient burning."
+    )
+
+    parts = [f"Stage ({stage_name}): {fert_note}"]
+    if soil_flags:
+        parts.append("Soil Health Alerts: " + " ".join(soil_flags))
+    parts.append(mandatory_reminder)
+
+    return "\n\n".join(parts)
+
+
+def calculate_risk_score(
+    crop_row: Any,
+    user: Any,
+    days: Optional[List[Dict[str, Any]]] = None,
+    deficit_info: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Calculate the 0-100 Farm Risk Score for a crop.
+
+    Deductions:
+      - -25 for each extreme weather day in next 3 days (heat, cold, heavy rain)
+      - -10 for rain probability > 70% during harvest stage
+      - -15 if rainfed and deficit >= threshold
+      - Clamped between 0 and 100
+    Labels:
+      - 80+: Good
+      - 50-79: Watch
+      - <50: High risk
+    """
+    score = 100
+    reasons: List[str] = []
+
+    today = date.today()
+    sowing_date = getattr(crop_row, "sowing_date", today)
+    if isinstance(sowing_date, str):
+        sowing_date = datetime.strptime(sowing_date, "%Y-%m-%d").date()
+
+    days_since_sowing = (today - sowing_date).days
+    crop_name = getattr(crop_row, "crop", "Onion")
+    crop_info = get_crop_data(crop_name)
+
+    sensitivity = crop_info.get("sensitivity", {}) if crop_info else {}
+    heat_thresh = sensitivity.get("heat_c", 40.0)
+    cold_thresh = sensitivity.get("cold_c", 6.0)
+    rain_thresh = sensitivity.get("heavy_rain_mm", 50.0)
+
+    # Evaluate next 3 days of forecast
+    if days:
+        future_days = [d for d in days if d.get("date") and d["date"] >= today.isoformat()][:3]
+        for d in future_days:
+            tmax = float(d.get("tmax", 30.0))
+            tmin = float(d.get("tmin", 20.0))
+            rain = float(d.get("rain_mm", 0.0))
+            d_date = d.get("date", "")
+
+            day_threats = []
+            if tmax >= heat_thresh:
+                day_threats.append(f"extreme heat ({tmax}°C)")
+            if tmin <= cold_thresh:
+                day_threats.append(f"cold night ({tmin}°C)")
+            if rain >= rain_thresh:
+                day_threats.append(f"heavy rainfall ({rain} mm)")
+
+            if day_threats:
+                score -= 25
+                reasons.append(f"Alert on {d_date}: {', '.join(day_threats)} exceeding crop tolerance.")
+
+        # Harvest stage rain risk
+        if crop_info:
+            duration = crop_info.get("duration_days", 120)
+            if days_since_sowing >= duration - 15:
+                rain_harvest = [d for d in future_days if int(d.get("rain_prob", 0)) > 70]
+                if rain_harvest:
+                    score -= 10
+                    reasons.append(f"Rain probability >70% on {rain_harvest[0]['date']} during sensitive harvest window.")
+
+    # Rainfed moisture stress
+    irrigation_type = getattr(crop_row, "irrigation_type", "drip").lower()
+    if irrigation_type == "rainfed" and deficit_info:
+        deficit_val = deficit_info.get("deficit", 0.0)
+        thresh_val = deficit_info.get("threshold", 30.0)
+        if deficit_val >= thresh_val:
+            score -= 15
+            reasons.append(f"Rainfed moisture stress: root-zone deficit ({deficit_val:.1f} mm) exceeds threshold ({thresh_val:.0f} mm).")
+
+    score = max(0, min(100, score))
+
+    if score >= 80:
+        level = "Good"
+        if not reasons:
+            reasons.append("Favorable weather conditions, balanced temperatures, and stable soil moisture.")
+    elif score >= 50:
+        level = "Watch"
+    else:
+        level = "High risk"
+
+    return {
+        "score": score,
+        "level": level,
+        "reasons": reasons,
+    }
+
+
+def calculate_overall_risk(crop_risks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Aggregate individual crop risk evaluations into a farm-level risk score."""
+    if not crop_risks:
+        return {
+            "score": 100,
+            "level": "Good",
+            "reasons": ["No active crops registered."],
+        }
+
+    min_score = min(cr.get("score", 100) for cr in crop_risks)
+    all_reasons = []
+    for cr in crop_risks:
+        for r in cr.get("reasons", []):
+            if r not in all_reasons and not r.startswith("Favorable"):
+                all_reasons.append(r)
+
+    if not all_reasons:
+        all_reasons = ["Favorable weather conditions and stable moisture across all farm plots."]
+
+    if min_score >= 80:
+        level = "Good"
+    elif min_score >= 50:
+        level = "Watch"
+    else:
+        level = "High risk"
+
+    return {
+        "score": min_score,
+        "level": level,
+        "reasons": all_reasons,
+    }
+

@@ -20,8 +20,15 @@ from app.auth import (
 from app.config import settings
 from app.crop_data import SUPPORTED_CROPS, get_crop_data
 from app.db import get_db
-from app.models import Crop, User
-from app.planner import build_roadmap, localise_roadmap
+from app.models import Crop, Notification, User, WateringLog
+from app.planner import (
+    build_roadmap,
+    calculate_overall_risk,
+    calculate_risk_score,
+    fertiliser_guidance,
+    irrigation_decision,
+    localise_roadmap,
+)
 from app.tools import geocode_place, get_soil_info
 from app.weather import get_forecast
 
@@ -110,6 +117,11 @@ class CreateCropRequest(BaseModel):
     area_acres: float = Field(1.0, gt=0, description="Field area in acres")
     sowing_date: date = Field(..., description="Date of sowing or transplanting (YYYY-MM-DD)")
     irrigation_type: str = Field("drip", description="Irrigation method: 'rainfed', 'drip', or 'flood'")
+
+
+class WateredRequest(BaseModel):
+    action: Optional[str] = "watered"  # "watered" or "skipped"
+    mm: Optional[float] = None
 
 
 # ===================== Auth Endpoints =====================
@@ -500,3 +512,165 @@ def get_crop_roadmap(
             "language": "English",
             "stages": english_stages,
         }
+
+
+@router.post("/crops/{crop_id}/watered")
+def record_watering_event(
+    crop_id: int,
+    req: Optional[WateredRequest] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Log an irrigation event or skipped watering, update last_watered, and record saved water."""
+    crop = db.query(Crop).filter(Crop.id == crop_id, Crop.user_id == current_user.id).first()
+    if not crop:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Crop not found or you do not have permission to log watering for it.",
+        )
+
+    action = (req.action or "watered").strip().lower() if req else "watered"
+    today = date.today()
+
+    if action == "watered":
+        crop.last_watered = today
+        applied_mm = float(req.mm) if (req and req.mm is not None) else 25.0
+        saved_mm = 0.0
+        log_entry = WateringLog(
+            crop_id=crop.id,
+            date=today,
+            action="watered",
+            mm_applied=applied_mm,
+            mm_saved=saved_mm,
+        )
+        db.add(log_entry)
+        db.commit()
+        db.refresh(crop)
+        message = f"Recorded watering of {applied_mm} mm for crop {crop.crop}."
+    else:  # skipped
+        applied_mm = 0.0
+        saved_mm = float(req.mm) if (req and req.mm is not None) else 25.0
+        log_entry = WateringLog(
+            crop_id=crop.id,
+            date=today,
+            action="skipped",
+            mm_applied=applied_mm,
+            mm_saved=saved_mm,
+        )
+        db.add(log_entry)
+        db.commit()
+        message = f"Recorded skipped watering of {saved_mm} mm for crop {crop.crop}."
+
+    return {
+        "status": "success",
+        "crop_id": crop.id,
+        "crop": crop.crop,
+        "last_watered": crop.last_watered.isoformat() if crop.last_watered else None,
+        "action": action,
+        "mm_applied": applied_mm,
+        "mm_saved": saved_mm,
+        "message": message,
+    }
+
+
+# ===================== Today Dashboard Endpoint =====================
+
+@router.get("/today")
+def get_today_dashboard(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retrieve the unified daily farm dashboard: weather, per-crop advice, irrigation, risk, and water saved."""
+    today = date.today()
+    today_str = today.isoformat()
+
+    # 1. Weather forecast
+    forecast_days = []
+    weather_summary = {}
+    if current_user.lat is not None and current_user.lon is not None:
+        try:
+            forecast_days = get_forecast(current_user.lat, current_user.lon)
+            today_weather = next((d for d in forecast_days if d.get("date") == today_str), None)
+            if not today_weather and forecast_days:
+                today_weather = forecast_days[0]
+
+            future_strip = [d for d in forecast_days if d.get("date") and d["date"] >= today_str][:7]
+            weather_summary = {
+                "location": {
+                    "village": current_user.village,
+                    "district": current_user.district,
+                    "state": current_user.state,
+                    "lat": current_user.lat,
+                    "lon": current_user.lon,
+                },
+                "today": today_weather,
+                "forecast_7d": future_strip,
+            }
+        except Exception:
+            weather_summary = {"notice": "Weather forecast temporarily unavailable."}
+    else:
+        weather_summary = {"notice": "Farm location coordinates not set."}
+
+    # 2. Crops evaluation
+    crops = db.query(Crop).filter(Crop.user_id == current_user.id, Crop.status == "active").all()
+    crop_cards = []
+    crop_risks = []
+
+    for c in crops:
+        days_since_sowing = (today - c.sowing_date).days if c.sowing_date else 0
+
+        # Irrigation recommendation
+        irr = irrigation_decision(c, current_user, forecast_days)
+
+        # Fertiliser guidance
+        fert = fertiliser_guidance(c, current_user)
+
+        # Risk score for this crop
+        risk = calculate_risk_score(c, current_user, forecast_days, irr)
+        crop_risks.append(risk)
+
+        crop_cards.append({
+            "id": c.id,
+            "crop": c.crop,
+            "area_acres": c.area_acres,
+            "irrigation_type": c.irrigation_type,
+            "sowing_date": c.sowing_date.isoformat() if c.sowing_date else None,
+            "days_since_sowing": days_since_sowing,
+            "last_watered": c.last_watered.isoformat() if c.last_watered else None,
+            "current_stage": irr.get("stage", "Growth"),
+            "irrigation": irr,
+            "fertiliser": fert,
+            "risk": risk,
+        })
+
+    # 3. Overall farm risk
+    overall_risk = calculate_overall_risk(crop_risks)
+
+    # 4. Total water saved calculation
+    water_logs = (
+        db.query(WateringLog, Crop.area_acres)
+        .join(Crop, WateringLog.crop_id == Crop.id)
+        .filter(Crop.user_id == current_user.id)
+        .all()
+    )
+    total_mm_saved = sum(log.mm_saved for log, _ in water_logs)
+    total_litres_saved = sum(log.mm_saved * 4047.0 * float(area or 1.0) for log, area in water_logs)
+
+    # 5. Unread notification count
+    unread_count = (
+        db.query(Notification)
+        .filter(Notification.user_id == current_user.id, Notification.read == False)
+        .count()
+    )
+
+    return {
+        "user": serialize_user(current_user),
+        "weather": weather_summary,
+        "crops": crop_cards,
+        "risk_score": overall_risk,
+        "water_saved_total": {
+            "litres": int(round(total_litres_saved)),
+            "mm": round(total_mm_saved, 1),
+        },
+        "unread_notifications_count": unread_count,
+    }
