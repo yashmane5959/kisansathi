@@ -277,36 +277,46 @@ def localise_roadmap(stages: List[Dict[str, Any]], language: str) -> List[Dict[s
             f"Input JSON:\n{json.dumps(trans_input, ensure_ascii=False)}"
         )
 
-        model_name = settings.gemini_model or "gemini-3.5-flash"
-        response = client.models.generate_content(
-            model=model_name,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.1,
-                response_mime_type="application/json",
-            ),
-        )
+        candidate_models = []
+        if settings.gemini_model:
+            candidate_models.append(settings.gemini_model)
+        for m in ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-flash-latest"):
+            if m not in candidate_models:
+                candidate_models.append(m)
 
-        resp_text = (response.text or "").strip()
-        # Strip markdown fences if present
-        if resp_text.startswith("```"):
-            resp_text = re.sub(r"^```[a-zA-Z]*\n?", "", resp_text)
-            resp_text = re.sub(r"\n?```$", "", resp_text).strip()
+        for model_name in candidate_models:
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.1,
+                        response_mime_type="application/json",
+                    ),
+                )
 
-        translated_list = json.loads(resp_text)
-        if isinstance(translated_list, list) and len(translated_list) == len(stages):
-            localised_stages: List[Dict[str, Any]] = []
-            for orig, trans in zip(stages, translated_list):
-                new_stg = copy.deepcopy(orig)
-                if isinstance(trans, dict):
-                    new_stg["name"] = trans.get("name") or orig["name"]
-                    new_stg["water_note"] = trans.get("water_note") or orig["water_note"]
-                    new_stg["fert_note"] = trans.get("fert_note") or orig["fert_note"]
-                    new_stg["pest_note"] = trans.get("pest_note") or orig["pest_note"]
-                    if "weather_note" in trans and trans["weather_note"]:
-                        new_stg["weather_note"] = trans["weather_note"]
-                localised_stages.append(new_stg)
-            return localised_stages
+                resp_text = (response.text or "").strip()
+                # Strip markdown fences if present
+                if resp_text.startswith("```"):
+                    resp_text = re.sub(r"^```[a-zA-Z]*\n?", "", resp_text)
+                    resp_text = re.sub(r"\n?```$", "", resp_text).strip()
+
+                translated_list = json.loads(resp_text)
+                if isinstance(translated_list, list) and len(translated_list) == len(stages):
+                    localised_stages: List[Dict[str, Any]] = []
+                    for orig, trans in zip(stages, translated_list):
+                        new_stg = copy.deepcopy(orig)
+                        if isinstance(trans, dict):
+                            new_stg["name"] = trans.get("name") or orig["name"]
+                            new_stg["water_note"] = trans.get("water_note") or orig["water_note"]
+                            new_stg["fert_note"] = trans.get("fert_note") or orig["fert_note"]
+                            new_stg["pest_note"] = trans.get("pest_note") or orig["pest_note"]
+                            if "weather_note" in trans and trans["weather_note"]:
+                                new_stg["weather_note"] = trans["weather_note"]
+                        localised_stages.append(new_stg)
+                    return localised_stages
+            except Exception as model_err:
+                logger.info("Roadmap model %s failed for %s: %s. Trying next...", model_name, clean_lang, model_err)
 
     except Exception as e:
         logger.warning("Roadmap localisation into %s failed: %s. Checking glossary fallback.", clean_lang, e)

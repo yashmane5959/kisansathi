@@ -41,6 +41,7 @@ def check_user(user: User, db: Session) -> List[Notification]:
     active_crops = db.query(Crop).filter(Crop.user_id == user.id, Crop.status == "active").all()
 
     # 2. Check each crop against sensitivity thresholds for next 3 days
+    # Creates ONE danger notification per event type per crop naming the first affected day and duration
     if active_crops:
         for crop in active_crops:
             crop_info = get_crop_data(crop.crop)
@@ -49,84 +50,123 @@ def check_user(user: User, db: Session) -> List[Notification]:
             cold_thresh = sens.get("cold_c", 6.0)
             rain_thresh = sens.get("heavy_rain_mm", 50.0)
 
-            for d in upcoming_3_days:
-                d_date = d["date"]
-                tmax = float(d.get("tmax", 30.0))
-                tmin = float(d.get("tmin", 20.0))
-                rain = float(d.get("rain_mm", 0.0))
+            heat_days = [d for d in upcoming_3_days if float(d.get("tmax", 30.0)) >= heat_thresh]
+            cold_days = [d for d in upcoming_3_days if float(d.get("tmin", 20.0)) <= cold_thresh]
+            rain_days = [d for d in upcoming_3_days if float(d.get("rain_mm", 0.0)) >= rain_thresh]
 
-                # Heatwave alert
-                if tmax >= heat_thresh:
-                    dedupe = f"climate:{d_date}:heatwave:{crop.id}"
-                    title = f"Heatwave Alert for {crop.crop}"
+            # 1. Heatwave: exactly ONE danger notification per crop
+            if heat_days:
+                first_d = heat_days[0]["date"]
+                duration = len(heat_days)
+                max_t = max(float(d.get("tmax", 30.0)) for d in heat_days)
+                dedupe = f"climate:{first_d}:heatwave:{crop.id}"
+                title = f"Heatwave Alert for {crop.crop}"
+                if duration == 1:
                     body = (
-                        f"Extreme temperature of {tmax}°C is forecast on {d_date}. "
+                        f"Extreme temperature of {max_t:.1f}°C is forecast on {first_d}. "
                         f"Irrigate during evening hours, mulch around root zones, and avoid daytime pesticide spraying."
                     )
-                    n = create_notification(
-                        db, user, kind="climate", severity="danger",
-                        title=title, body=body, dedupe_key=dedupe
-                    )
-                    if n:
-                        created_notifications.append(n)
-
-                # Cold wave / frost alert
-                if tmin <= cold_thresh:
-                    dedupe = f"climate:{d_date}:cold:{crop.id}"
-                    title = f"Cold Wave & Frost Warning for {crop.crop}"
+                else:
                     body = (
-                        f"Severe night temperature drop to {tmin}°C is expected on {d_date}. "
+                        f"Heatwave lasting {duration} days starting {first_d} (peak temperature {max_t:.1f}°C). "
+                        f"Irrigate during evening hours, mulch around root zones, and avoid daytime pesticide spraying."
+                    )
+                n = create_notification(
+                    db, user, kind="climate", severity="danger",
+                    title=title, body=body, dedupe_key=dedupe
+                )
+                if n:
+                    created_notifications.append(n)
+
+            # 2. Cold wave / frost: exactly ONE danger notification per crop
+            if cold_days:
+                first_d = cold_days[0]["date"]
+                duration = len(cold_days)
+                min_t = min(float(d.get("tmin", 20.0)) for d in cold_days)
+                dedupe = f"climate:{first_d}:cold:{crop.id}"
+                title = f"Cold Wave & Frost Warning for {crop.crop}"
+                if duration == 1:
+                    body = (
+                        f"Severe night temperature drop to {min_t:.1f}°C is expected on {first_d}. "
                         f"Give a light evening irrigation to keep root zones warm and cover tender nursery beds."
                     )
-                    n = create_notification(
-                        db, user, kind="climate", severity="danger",
-                        title=title, body=body, dedupe_key=dedupe
-                    )
-                    if n:
-                        created_notifications.append(n)
-
-                # Heavy rain alert
-                if rain >= rain_thresh:
-                    dedupe = f"climate:{d_date}:heavyrain:{crop.id}"
-                    title = f"Heavy Rainfall Warning for {crop.crop}"
+                else:
                     body = (
-                        f"Heavy rain of {rain} mm is forecast on {d_date}. "
+                        f"Cold wave lasting {duration} days starting {first_d} (lowest temperature {min_t:.1f}°C). "
+                        f"Give a light evening irrigation to keep root zones warm and cover tender nursery beds."
+                    )
+                n = create_notification(
+                    db, user, kind="climate", severity="danger",
+                    title=title, body=body, dedupe_key=dedupe
+                )
+                if n:
+                    created_notifications.append(n)
+
+            # 3. Heavy rain: exactly ONE danger notification per crop
+            if rain_days:
+                first_d = rain_days[0]["date"]
+                duration = len(rain_days)
+                max_rain = max(float(d.get("rain_mm", 0.0)) for d in rain_days)
+                total_rain = sum(float(d.get("rain_mm", 0.0)) for d in rain_days)
+                dedupe = f"climate:{first_d}:heavyrain:{crop.id}"
+                title = f"Heavy Rainfall Warning for {crop.crop}"
+                if duration == 1:
+                    body = (
+                        f"Heavy rain of {max_rain:.1f} mm is forecast on {first_d}. "
                         f"Clear field drainage furrows immediately; postpone all spraying, weeding, and fertilizer applications."
                     )
-                    n = create_notification(
-                        db, user, kind="climate", severity="danger",
-                        title=title, body=body, dedupe_key=dedupe
+                else:
+                    body = (
+                        f"Heavy rainfall lasting {duration} days starting {first_d} (total {total_rain:.1f} mm, peak {max_rain:.1f} mm). "
+                        f"Clear field drainage furrows immediately; postpone all spraying, weeding, and fertilizer applications."
                     )
-                    if n:
-                        created_notifications.append(n)
+                n = create_notification(
+                    db, user, kind="climate", severity="danger",
+                    title=title, body=body, dedupe_key=dedupe
+                )
+                if n:
+                    created_notifications.append(n)
     else:
         # User has location but no crops: check generic agricultural thresholds
-        for d in upcoming_3_days:
-            d_date = d["date"]
-            tmax = float(d.get("tmax", 30.0))
-            tmin = float(d.get("tmin", 20.0))
-            rain = float(d.get("rain_mm", 0.0))
+        heat_days = [d for d in upcoming_3_days if float(d.get("tmax", 30.0)) >= 40.0]
+        rain_days = [d for d in upcoming_3_days if float(d.get("rain_mm", 0.0)) >= 50.0]
 
-            if tmax >= 40.0:
-                dedupe = f"climate:{d_date}:heatwave:0"
-                n = create_notification(
-                    db, user, kind="climate", severity="danger",
-                    title="High Temperature Warning",
-                    body=f"High temperature of {tmax}°C forecast on {d_date}. Ensure farm livestock and nursery are shaded.",
-                    dedupe_key=dedupe,
-                )
-                if n:
-                    created_notifications.append(n)
-            elif rain >= 50.0:
-                dedupe = f"climate:{d_date}:heavyrain:0"
-                n = create_notification(
-                    db, user, kind="climate", severity="danger",
-                    title="Heavy Rain Warning",
-                    body=f"Heavy rain of {rain} mm forecast on {d_date}. Secure farm drains and postpone spraying.",
-                    dedupe_key=dedupe,
-                )
-                if n:
-                    created_notifications.append(n)
+        if heat_days:
+            first_d = heat_days[0]["date"]
+            duration = len(heat_days)
+            max_t = max(float(d.get("tmax", 30.0)) for d in heat_days)
+            dedupe = f"climate:{first_d}:heatwave:0"
+            if duration == 1:
+                body = f"High temperature of {max_t:.1f}°C forecast on {first_d}. Ensure farm livestock and nursery are shaded."
+            else:
+                body = f"High temperature lasting {duration} days starting {first_d} (peak {max_t:.1f}°C). Ensure farm livestock and nursery are shaded."
+            n = create_notification(
+                db, user, kind="climate", severity="danger",
+                title="High Temperature Warning",
+                body=body,
+                dedupe_key=dedupe,
+            )
+            if n:
+                created_notifications.append(n)
+
+        if rain_days:
+            first_d = rain_days[0]["date"]
+            duration = len(rain_days)
+            max_rain = max(float(d.get("rain_mm", 0.0)) for d in rain_days)
+            total_rain = sum(float(d.get("rain_mm", 0.0)) for d in rain_days)
+            dedupe = f"climate:{first_d}:heavyrain:0"
+            if duration == 1:
+                body = f"Heavy rain of {max_rain:.1f} mm forecast on {first_d}. Secure farm drains and postpone spraying."
+            else:
+                body = f"Heavy rain lasting {duration} days starting {first_d} (total {total_rain:.1f} mm). Secure farm drains and postpone spraying."
+            n = create_notification(
+                db, user, kind="climate", severity="danger",
+                title="Heavy Rain Warning",
+                body=body,
+                dedupe_key=dedupe,
+            )
+            if n:
+                created_notifications.append(n)
 
     # 3. Detect sudden forecast changes vs. previous ForecastSnapshot
     rain_sum = round(sum(float(d.get("rain_mm", 0.0)) for d in upcoming_3_days), 1)

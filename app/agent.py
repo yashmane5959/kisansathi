@@ -114,8 +114,8 @@ def advise(
         temperature=0.3,
     )
 
-    primary_model = settings.gemini_model.strip() or "gemini-3.5-flash"
-    all_fallbacks = [primary_model, "gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-2.5-flash"]
+    primary_model = settings.gemini_model.strip() or "gemini-3.1-flash-lite"
+    all_fallbacks = [primary_model, "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-flash-latest", "gemini-3.5-flash"]
     candidate_models = []
     for m in all_fallbacks:
         if m and m not in candidate_models:

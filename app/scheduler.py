@@ -87,17 +87,21 @@ def generate_morning_briefing(user: User, db: Session) -> str:
         else:
             lines.append(f"Watering today: No, soil moisture is adequate (deficit {irr.get('deficit', 0)} mm).")
 
-        # Line 5: One concise fertiliser tip
-        first_fert_line = fert.split("\n")[0].replace("Stage (", "").replace("):", " -")
-        if len(first_fert_line) > 100:
-            first_fert_line = first_fert_line[:97] + "..."
-        lines.append(f"Fertiliser tip: {first_fert_line}")
+        # Line 5: One concise fertiliser tip (pick first sentence only, no mid-word truncation)
+        first_fert_block = fert.split("\n")[0].replace("Stage (", "").replace("):", " -").strip()
+        fert_sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", first_fert_block) if s.strip()]
+        fert_tip = fert_sentences[0] if fert_sentences else first_fert_block
+        if not fert_tip.endswith((".", "!", "?")):
+            fert_tip += "."
+        lines.append(f"Fertiliser tip: {fert_tip}")
 
-        # Line 6: Risk score
-        top_reason = risk.get("reasons", ["Conditions stable"])[0]
-        if len(top_reason) > 70:
-            top_reason = top_reason[:67] + "..."
-        lines.append(f"Farm Risk: {risk.get('level', 'Good')} ({top_reason}).")
+        # Line 6: Risk score (first sentence of top reason, no mid-word truncation)
+        top_reason = risk.get("reasons", ["Conditions stable"])[0].strip()
+        reason_sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", top_reason) if s.strip()]
+        clean_reason = reason_sentences[0] if reason_sentences else top_reason
+        if clean_reason.endswith((".", "!", "?")):
+            clean_reason = clean_reason[:-1].strip()
+        lines.append(f"Farm Risk: {risk.get('level', 'Good')} ({clean_reason}).")
     else:
         # Fallback lines if no crop is active yet
         lines.append("No active crops currently registered in your farm profile.")

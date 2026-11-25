@@ -55,7 +55,9 @@ def send_telegram(chat_id: str, text: str) -> bool:
 def localise_text(text: str, language: str) -> str:
     """Localise text into regional Indian languages using Gemini, with in-memory caching.
 
-    Falls back to original English text without crashing on any failure.
+    Tries primary configured model then lightweight fallbacks.
+    Falls back to original English text without crashing on any failure,
+    and logs a clear ASCII-only warning if all models fail.
     """
     if not text or not language or language.strip().lower() in ("english", "en", "auto"):
         return text
@@ -65,6 +67,14 @@ def localise_text(text: str, language: str) -> str:
     if cache_key in _TEXT_CACHE:
         return _TEXT_CACHE[cache_key]
 
+    candidate_models = []
+    if settings.gemini_model:
+        candidate_models.append(settings.gemini_model)
+    for m in ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-flash-latest"):
+        if m not in candidate_models:
+            candidate_models.append(m)
+
+    last_error = None
     try:
         from google.genai import types
         from app.agent import get_gemini_client
@@ -77,26 +87,40 @@ def localise_text(text: str, language: str) -> str:
             f"Output ONLY the translated text without explanations:\n\n{text}"
         )
 
-        model_name = settings.gemini_model or "gemini-3.5-flash"
-        response = client.models.generate_content(
-            model=model_name,
-            contents=prompt,
-            config=types.GenerateContentConfig(temperature=0.1),
-        )
+        for model_name in candidate_models:
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(temperature=0.1),
+                )
 
-        translated = (response.text or "").strip()
-        # Clean any accidental code fences or markdown bullets
-        translated = re.sub(r"^```[a-zA-Z]*\n?", "", translated)
-        translated = re.sub(r"\n?```$", "", translated).strip()
-        translated = translated.replace("*", "").replace("#", "")
+                translated = (response.text or "").strip()
+                # Clean any accidental code fences or markdown bullets
+                translated = re.sub(r"^```[a-zA-Z]*\n?", "", translated)
+                translated = re.sub(r"\n?```$", "", translated).strip()
+                translated = translated.replace("*", "").replace("#", "")
 
-        if translated:
-            _TEXT_CACHE[cache_key] = translated
-            return translated
+                if translated:
+                    _TEXT_CACHE[cache_key] = translated
+                    return translated
+            except Exception as model_err:
+                last_error = model_err
+                logger.info(
+                    "Model %s failed for %s translation: %s. Trying next candidate...",
+                    model_name,
+                    clean_lang,
+                    str(model_err),
+                )
 
     except Exception as e:
-        logger.warning("localise_text failed for %s: %s. Returning English.", clean_lang, e)
+        last_error = e
 
+    logger.warning(
+        "[TRANSLATION WARNING] All Gemini models failed to localise text into '%s'. Reason: %s. Falling back to English.",
+        clean_lang,
+        str(last_error),
+    )
     return text
 
 

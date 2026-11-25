@@ -539,10 +539,12 @@ def record_watering_event(
         WateringLog.date == today,
     ).first()
 
+    DAILY_BASELINE_MM = 8.3  # Spec baseline: 25 mm every 3 days -> 8.3 mm/day
+
     if action == "watered":
         crop.last_watered = today
         applied_mm = float(req.mm) if (req and req.mm is not None) else 25.0
-        saved_mm = 0.0
+        saved_mm = max(0.0, round(DAILY_BASELINE_MM - applied_mm, 1))
         if existing_log:
             existing_log.action = "watered"
             existing_log.mm_applied = applied_mm
@@ -558,10 +560,10 @@ def record_watering_event(
             db.add(log_entry)
         db.commit()
         db.refresh(crop)
-        message = f"Recorded watering of {applied_mm} mm for crop {crop.crop}."
+        message = f"Recorded watering of {applied_mm} mm for crop {crop.crop} (saved {saved_mm} mm)."
     else:  # skipped
         applied_mm = 0.0
-        saved_mm = float(req.mm) if (req and req.mm is not None) else 25.0
+        saved_mm = float(req.mm) if (req and req.mm is not None) else DAILY_BASELINE_MM
         if existing_log:
             existing_log.action = "skipped"
             existing_log.mm_applied = applied_mm
