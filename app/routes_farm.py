@@ -1,8 +1,10 @@
 """API routes for authentication, farm profiles, and user management."""
 
+import json
 import secrets
-from typing import Any, Dict, Optional
-from fastapi import APIRouter, Depends, HTTPException, Security, status
+from datetime import date
+from typing import Any, Dict, List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -16,9 +18,12 @@ from app.auth import (
     verify_password,
 )
 from app.config import settings
+from app.crop_data import SUPPORTED_CROPS, get_crop_data
 from app.db import get_db
-from app.models import User
+from app.models import Crop, User
+from app.planner import build_roadmap, localise_roadmap
 from app.tools import geocode_place, get_soil_info
+from app.weather import get_forecast
 
 router = APIRouter(prefix="/api", tags=["Farm Auth & Profile"])
 
@@ -43,6 +48,29 @@ def serialize_user(user: User) -> Dict[str, Any]:
         "link_code": user.link_code,
         "demo_scenario": user.demo_scenario,
         "created_at": user.created_at.isoformat() if user.created_at else None,
+    }
+
+
+def serialize_crop(crop: Crop) -> Dict[str, Any]:
+    """Helper to convert a Crop model instance into a JSON-friendly dict."""
+    stages = []
+    if crop.roadmap_json:
+        try:
+            stages = json.loads(crop.roadmap_json)
+        except Exception:
+            stages = []
+    return {
+        "id": crop.id,
+        "user_id": crop.user_id,
+        "crop": crop.crop,
+        "area_acres": crop.area_acres,
+        "sowing_date": crop.sowing_date.isoformat() if crop.sowing_date else None,
+        "irrigation_type": crop.irrigation_type,
+        "last_watered": crop.last_watered.isoformat() if crop.last_watered else None,
+        "status": crop.status,
+        "roadmap_lang": crop.roadmap_lang,
+        "stages": stages,
+        "created_at": crop.created_at.isoformat() if crop.created_at else None,
     }
 
 
@@ -75,6 +103,13 @@ class ProfileUpdateRequest(BaseModel):
     lat: Optional[float] = None
     lon: Optional[float] = None
     phone: Optional[str] = None
+
+
+class CreateCropRequest(BaseModel):
+    crop: str = Field(..., description="Crop name (e.g. Onion, Tomato, Wheat, Soybean, Cotton, Rice, Sugarcane)")
+    area_acres: float = Field(1.0, gt=0, description="Field area in acres")
+    sowing_date: date = Field(..., description="Date of sowing or transplanting (YYYY-MM-DD)")
+    irrigation_type: str = Field("drip", description="Irrigation method: 'rainfed', 'drip', or 'flood'")
 
 
 # ===================== Auth Endpoints =====================
@@ -310,3 +345,158 @@ def generate_telegram_link_code(
         "command": f"/link {code}",
         "instructions": f"Open Telegram, start @{bot_username}, and send: /link {code}",
     }
+
+
+# ===================== Crop Endpoints =====================
+
+@router.get("/crops")
+def list_crops(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List all crops belonging to the authenticated farmer."""
+    crops = db.query(Crop).filter(Crop.user_id == current_user.id).order_by(Crop.id.desc()).all()
+    return [serialize_crop(c) for c in crops]
+
+
+@router.post("/crops")
+def create_crop(
+    req: CreateCropRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Add a new crop to the farmer's portfolio and build its growth roadmap."""
+    crop_info = get_crop_data(req.crop)
+    if not crop_info:
+        valid_crops = ", ".join(SUPPORTED_CROPS)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported crop '{req.crop}'. Supported crops are: {valid_crops}.",
+        )
+
+    canonical_crop = crop_info["canonical_name"]
+    irrigation = req.irrigation_type.strip().lower()
+    if irrigation not in ("rainfed", "drip", "flood"):
+        irrigation = "drip"
+
+    # Fetch weather forecast for weather warnings if coordinates are available
+    forecast_days = None
+    if current_user.lat is not None and current_user.lon is not None:
+        try:
+            forecast_days = get_forecast(current_user.lat, current_user.lon)
+        except Exception:
+            forecast_days = None
+
+    class CropContext:
+        crop = canonical_crop
+        sowing_date = req.sowing_date
+        area_acres = req.area_acres
+        irrigation_type = irrigation
+
+    english_stages = build_roadmap(CropContext(), forecast_days=forecast_days)
+
+    target_lang = current_user.language or "English"
+    if target_lang.lower() not in ("english", "en", "auto"):
+        stages = localise_roadmap(english_stages, target_lang)
+        roadmap_lang = target_lang
+    else:
+        stages = english_stages
+        roadmap_lang = "English"
+
+    crop = Crop(
+        user_id=current_user.id,
+        crop=canonical_crop,
+        area_acres=req.area_acres,
+        sowing_date=req.sowing_date,
+        irrigation_type=irrigation,
+        status="active",
+        roadmap_json=json.dumps(stages, ensure_ascii=False),
+        roadmap_lang=roadmap_lang,
+    )
+    db.add(crop)
+    db.commit()
+    db.refresh(crop)
+
+    return serialize_crop(crop)
+
+
+@router.delete("/crops/{crop_id}")
+def delete_crop(
+    crop_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove a crop from the farmer's portfolio. Only the crop owner can delete."""
+    crop = db.query(Crop).filter(Crop.id == crop_id, Crop.user_id == current_user.id).first()
+    if not crop:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Crop not found or you do not have permission to delete it.",
+        )
+
+    db.delete(crop)
+    db.commit()
+    return {"status": "success", "message": f"Crop {crop_id} deleted successfully."}
+
+
+@router.get("/crops/{crop_id}/roadmap")
+def get_crop_roadmap(
+    crop_id: int,
+    lang: Optional[str] = Query(None, description="Language for roadmap localisation (e.g. Marathi, Hindi)"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retrieve dated roadmap for a specific crop, optionally localised to a chosen language."""
+    crop = db.query(Crop).filter(Crop.id == crop_id, Crop.user_id == current_user.id).first()
+    if not crop:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Crop not found or you do not have permission to access it.",
+        )
+
+    target_lang = lang.strip() if lang and lang.strip() else (current_user.language or "English")
+
+    # If already cached in target language, return directly
+    if crop.roadmap_json and crop.roadmap_lang and crop.roadmap_lang.lower() == target_lang.lower():
+        try:
+            cached_stages = json.loads(crop.roadmap_json)
+            return {
+                "crop_id": crop.id,
+                "crop": crop.crop,
+                "language": crop.roadmap_lang,
+                "stages": cached_stages,
+            }
+        except Exception:
+            pass
+
+    # Build fresh English stages
+    forecast_days = None
+    if current_user.lat is not None and current_user.lon is not None:
+        try:
+            forecast_days = get_forecast(current_user.lat, current_user.lon)
+        except Exception:
+            forecast_days = None
+
+    english_stages = build_roadmap(crop, forecast_days=forecast_days)
+
+    if target_lang.lower() not in ("english", "en", "auto"):
+        localised_stages = localise_roadmap(english_stages, target_lang)
+        crop.roadmap_json = json.dumps(localised_stages, ensure_ascii=False)
+        crop.roadmap_lang = target_lang
+        db.commit()
+        return {
+            "crop_id": crop.id,
+            "crop": crop.crop,
+            "language": target_lang,
+            "stages": localised_stages,
+        }
+    else:
+        crop.roadmap_json = json.dumps(english_stages, ensure_ascii=False)
+        crop.roadmap_lang = "English"
+        db.commit()
+        return {
+            "crop_id": crop.id,
+            "crop": crop.crop,
+            "language": "English",
+            "stages": english_stages,
+        }
