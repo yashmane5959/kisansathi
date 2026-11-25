@@ -22,6 +22,7 @@ from app.config import settings
 from app.crop_data import SUPPORTED_CROPS, get_crop_data
 from app.db import get_db
 from app.models import Crop, Notification, User, WateringLog
+from app.notify import get_bot_username
 from app.planner import (
     build_roadmap,
     calculate_overall_risk,
@@ -54,6 +55,7 @@ def serialize_user(user: User) -> Dict[str, Any]:
         "soil_ph": user.soil_ph,
         "soil_oc": user.soil_oc,
         "telegram_chat_id": user.telegram_chat_id,
+        "telegram_bot_username": get_bot_username(),
         "link_code": user.link_code,
         "demo_scenario": user.demo_scenario,
         "created_at": user.created_at.isoformat() if user.created_at else None,
@@ -351,13 +353,15 @@ def generate_telegram_link_code(
     db.commit()
     db.refresh(current_user)
 
-    bot_username = "KisanSathiBot"
+    bot_username = get_bot_username()
+    bot_mention = f"@{bot_username}" if bot_username else "our Telegram bot"
+    instructions = f"Open Telegram, start {bot_mention}, and send: /link {code}"
     return {
         "status": "success",
         "link_code": code,
         "bot_username": bot_username,
         "command": f"/link {code}",
-        "instructions": f"Open Telegram, start @{bot_username}, and send: /link {code}",
+        "instructions": instructions,
     }
 
 
@@ -685,6 +689,20 @@ def get_today_dashboard(
         .count()
     )
 
+    # 6. Telegram connection & linking instructions for dashboard
+    bot_username = get_bot_username()
+    bot_mention = f"@{bot_username}" if bot_username else "our Telegram bot"
+    if current_user.telegram_chat_id:
+        tg_instructions = "Telegram alerts active."
+    else:
+        tg_instructions = f"To receive weather alerts on Telegram, open {bot_mention} and send your link code."
+
+    telegram_summary = {
+        "linked": bool(current_user.telegram_chat_id),
+        "bot_username": bot_username,
+        "instructions": tg_instructions,
+    }
+
     return {
         "user": serialize_user(current_user),
         "weather": weather_summary,
@@ -695,6 +713,7 @@ def get_today_dashboard(
             "mm": round(total_mm_saved, 1),
         },
         "unread_notifications_count": unread_count,
+        "telegram": telegram_summary,
     }
 
 

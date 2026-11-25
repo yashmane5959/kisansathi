@@ -5,6 +5,7 @@ Telegram alerts via HTTP.
 """
 
 import logging
+import os
 import re
 from typing import Dict, Optional, Tuple
 import httpx
@@ -17,6 +18,64 @@ logger = logging.getLogger("kisansathi.notify")
 
 # In-memory translation cache: (text_hash, language) -> translated_text
 _TEXT_CACHE: Dict[Tuple[int, str], str] = {}
+
+# Cached Telegram bot username discovered from getMe or env override
+_BOT_USERNAME_CACHE: Optional[str] = None
+
+
+def fetch_bot_username(force_refresh: bool = False) -> str:
+    """Fetch and cache the Telegram bot username from getMe API with env override.
+
+    Resolution order:
+    1. TELEGRAM_BOT_USERNAME env var (override).
+    2. Cached value in memory (unless force_refresh is True).
+    3. Telegram getMe API response using TELEGRAM_BOT_TOKEN.
+
+    Never hardcodes a fallback bot name. Returns empty string if unavailable.
+    """
+    global _BOT_USERNAME_CACHE
+
+    # 1. Environment variable override
+    env_override = (
+        os.getenv("TELEGRAM_BOT_USERNAME", "").strip()
+        or (settings.telegram_bot_username or "").strip()
+    ).lstrip("@")
+    if env_override:
+        _BOT_USERNAME_CACHE = env_override
+        return _BOT_USERNAME_CACHE
+
+    # 2. Return cached if available and not forcing refresh
+    if _BOT_USERNAME_CACHE and not force_refresh:
+        return _BOT_USERNAME_CACHE
+
+    token = (settings.telegram_bot_token or "").strip()
+    if not token:
+        return ""
+
+    try:
+        url = f"https://api.telegram.org/bot{token}/getMe"
+        with httpx.Client(timeout=8.0) as client:
+            resp = client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("ok") and data.get("result", {}).get("username"):
+                    username = data["result"]["username"].strip().lstrip("@")
+                    _BOT_USERNAME_CACHE = username
+                    logger.info("Discovered Telegram bot username: @%s", username)
+                    return username
+            logger.warning("Telegram getMe failed (status %d): %s", resp.status_code, resp.text)
+    except Exception as e:
+        logger.warning("Failed to fetch bot username via getMe: %s", e)
+
+    return _BOT_USERNAME_CACHE or ""
+
+
+def get_bot_username() -> str:
+    """Retrieve the cached Telegram bot username without leading '@'."""
+    global _BOT_USERNAME_CACHE
+    if not _BOT_USERNAME_CACHE:
+        return fetch_bot_username()
+    return _BOT_USERNAME_CACHE
 
 
 def send_telegram(chat_id: str, text: str) -> bool:

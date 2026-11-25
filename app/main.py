@@ -43,6 +43,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("Failed to start scheduler: %s", e)
 
+    # Discover and cache Telegram bot username at startup (from getMe or env override)
+    try:
+        from app.notify import fetch_bot_username
+        discovered_username = fetch_bot_username()
+        if discovered_username:
+            logger.info("Telegram Bot active username: @%s", discovered_username)
+    except Exception as e:
+        logger.warning("Bot username discovery at startup failed: %s", e)
+
     # Start Telegram bot ONLY if RUN_BOT_IN_APP is explicitly enabled
     token = settings.telegram_bot_token.strip()
     if settings.run_bot_in_app and token:
